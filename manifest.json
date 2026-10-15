@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "atsokolas.isobar",
+  "name": "Isobar",
+  "version": "1.0.0",
+  "author": "atsokolas",
+  "license": "MIT",
+  "description": "The weather, drawn in your theme — a sky that moves, a forecast in a sentence, and the next 24 hours at a glance.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Isobar",
+    "description": "The sky and the temperature on the bar; the day ahead in the panel.",
+    "category": "Info",
+    "aliases": [
+      "weather",
+      "forecast",
+      "temperature",
+      "rain",
+      "isobar"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "unit": "auto",
+      "showHint": true,
+      "notify": false,
+      "animate": true,
+      "refreshMinutes": 15
+    },
+    "schema": [
+      {
+        "key": "unit",
+        "type": "enum",
+        "label": "Units",
+        "options": [
+          "auto",
+          "metric",
+          "imperial"
+        ],
+        "defaultValue": "auto",
+        "description": "Automatic follows your locale: °F and mph in the US, °C and km/h elsewhere."
+      },
+      {
+        "key": "showHint",
+        "type": "boolean",
+        "label": "Rain hint on the bar",
+        "defaultValue": true,
+        "description": "\"Rain in 20m\" beside the temperature, only when it's coming."
+      },
+      {
+        "key": "notify",
+        "type": "boolean",
+        "label": "Heads-up before rain",
+        "defaultValue": false,
+        "description": "A quiet toast half an hour before rain or snow arrives."
+      },
+      {
+        "key": "animate",
+        "type": "boolean",
+        "label": "Moving sky",
+        "defaultValue": true,
+        "description": "Rays turn and rain falls while you hover or the panel is open."
+      },
+      {
+        "key": "refreshMinutes",
+        "type": "integer",
+        "label": "Refresh every (minutes)",
+        "min": 5,
+        "max": 180,
+        "step": 5,
+        "defaultValue": 15
+      }
+    ]
+  }
+}
