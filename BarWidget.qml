@@ -68,6 +68,17 @@ BarWidget {
     }
     function summary(): string { return root.service ? root.service.sentence : "" }
     function place(): string { return root.service ? root.service.placeName : "" }
+    // One line per saved place: "Tokyo  14°  Clear  6:12 am".
+    function places(): string {
+      var s = root.service
+      if (!s) return ""
+      return s.places.map(function(p) {
+        var fc = s.placeForecasts[p.key]
+        if (!fc) return p.name + "  —"
+        var lms = Model.nowLocal(s.nowMs, fc.offset)
+        return p.name + "  " + Model.tempText(fc.current.temp, s.imperial) + "  " + Model.conditionLabel(fc.current.code, fc.current.isDay) + "  " + Model.clockText(lms, s.use24)
+      }).join("\n")
+    }
   }
 
   Loader {
@@ -96,7 +107,8 @@ BarWidget {
     hasVisualContent: true
     fixedWidth: root.vertical ? -1 : Math.max(12, content.implicitWidth + button.scaledHorizontalMargin * 2)
     fixedHeight: root.vertical ? content.implicitHeight + button.scaledVerticalPadding * 2 : -1
-    foreground: root.opened ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground)
+    readonly property color accent: root.service && root.service.palette ? root.service.palette.accent : (root.bar ? root.bar.barForeground : "#cccccc")
+    foreground: root.opened ? accent : (root.bar ? root.bar.barForeground : "#cccccc")
     tooltipText: root.service ? Model.tooltipText(root.service.forecast, root.service.localNow, root.service.imperial, root.service.placeName) : Model.APP_NAME
     horizontalMargin: 8.75
     verticalPadding: 6

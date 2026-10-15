@@ -19,6 +19,9 @@ Panel {
   property string page: "main"
   // 0 is "the next 24 hours, from now"; 1–6 are the days after today.
   property int dayIndex: 0
+  // The place on screen: "" is home, otherwise a saved place's key.
+  property string viewKey: ""
+  property int placeCursor: 0
 
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -29,11 +32,26 @@ Panel {
     ? bar.shell.serviceFor(moduleName) : null
   readonly property var service: sharedService || localService
 
-  readonly property var fc: service.forecast
-  readonly property var now: service.current
+  readonly property var viewPlace: viewKey !== "" ? service.placeFor(viewKey) : null
+  readonly property bool away: viewPlace !== null
+  readonly property string viewName: away ? viewPlace.name : service.placeName
+
+  // Home and every saved place are read through the same view.
+  WeatherView {
+    id: view
+    forecast: root.away ? (root.service.placeForecasts[root.viewKey] || null) : root.service.forecast
+    air: root.away ? null : root.service.air
+    imperial: root.service.imperial
+    use24: root.service.use24
+    nowMs: root.service.nowMs
+  }
+
+  readonly property var fc: view.forecast
+  readonly property var now: view.current
   readonly property bool imperial: service.imperial
   readonly property bool use24: service.use24
-  readonly property real lms: service.localNow
+  readonly property real lms: view.localNow
+  readonly property bool viewLoading: away ? service.fetchingPlace === viewKey : service.loading
   readonly property var palette: service.palette
 
   // The sky in the theme's colours: a yellow sun, a blue rain. The bar stays
@@ -41,10 +59,14 @@ Panel {
   readonly property color sunTint: palette ? palette.yellow : foreground
   readonly property color wetTint: palette ? palette.blue : foreground
   readonly property color boltTint: palette ? palette.yellow : foreground
+  // Plugins can't count on the shell's Color singleton, so the accent and
+  // the warning colour come from the theme too.
+  readonly property color accent: palette ? palette.accent : foreground
+  readonly property color urgent: palette ? palette.red : foreground
   // The panel's own background, for the rings around beads on a line.
   readonly property color surface: palette ? palette.background : "#000000"
 
-  readonly property var week: service.weekData
+  readonly property var week: view.weekData
   readonly property var range: Model.weekRange(week)
   readonly property var selectedDay: dayIndex > 0 && dayIndex < week.length ? week[dayIndex] : null
   readonly property var chartHours: selectedDay ? Model.hoursOfDay(fc, selectedDay.date) : Model.upcomingHours(fc, lms, 24)
@@ -124,9 +146,11 @@ Panel {
     persistSettings({ unit: next })
   }
 
-  function showPage(name) {
+  function showPage(name, mode) {
     page = name
+    if (name === "places") placeCursor = Math.max(0, root.placeKeys.indexOf(root.viewKey))
     if (name === "place") {
+      placeSearch.mode = mode || "home"
       placeSearch.reset()
       Qt.callLater(function() { placeField.forceActiveFocus() })
     } else {
@@ -141,12 +165,61 @@ Panel {
     chart.drawIn()
   }
 
+  // Every place in order, home first, for [ and ] to walk through.
+  readonly property var placeKeys: [""].concat(service.places.map(function(p) { return p.key }))
+
+  function showPlace(key) {
+    viewKey = key || ""
+    dayIndex = 0
+    chart.clearSelection()
+    page = "main"
+    revealAnim.restart()
+    chart.drawIn()
+    sunArc.drawIn()
+    hero.play()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    if (viewKey !== "") {
+      var have = service.placeForecasts[viewKey]
+      if (!have || Date.now() - have.fetchedAt > 10 * 60000) service.fetchPlace(viewKey)
+    }
+  }
+
+  function stepPlace(delta) {
+    var keys = placeKeys
+    if (keys.length < 2) return
+    var i = Math.max(0, keys.indexOf(viewKey))
+    showPlace(keys[(i + delta + keys.length) % keys.length])
+  }
+
+  // Row 0 is home, then each place, then "Add a place".
+  function activatePlaceRow(i) {
+    if (i <= 0) showPlace("")
+    else if (i > service.places.length) { if (service.places.length < Model.MAX_PLACES) showPage("place", "add") }
+    else showPlace(service.places[i - 1].key)
+  }
+
+  function addPlace(p) {
+    var list = Model.addPlace(service.places, p)
+    persistSettings({ places: list })
+    showPlace(Model.placeKey(p))
+  }
+
+  function removePlace(key) {
+    persistSettings({ places: Model.removePlace(service.places, key) })
+    if (viewKey === key) viewKey = ""
+    placeCursor = Math.max(0, Math.min(placeCursor, service.places.length))
+  }
+
   function handleClose() {
     if (page !== "main") showPage("main")
     else close()
   }
 
   function handleMove(dx, dy) {
+    if (page === "places") {
+      if (dy !== 0) placeCursor = Math.max(0, Math.min(service.places.length + 1, placeCursor + dy))
+      return
+    }
     if (page !== "main") return
     if (dx !== 0) chart.step(dx)
     else if (dy !== 0) selectDay(dayIndex + dy)
@@ -156,6 +229,8 @@ Panel {
     if (!opened) return
     page = "main"
     dayIndex = 0
+    viewKey = ""
+    service.fetchPlaces(false)
     chart.clearSelection()
     revealAnim.restart()
     chart.drawIn()
@@ -187,17 +262,26 @@ Panel {
     property int cursor: 0
     property string pending: ""
     property bool busy: false
+    // "home" sets where you are; "add" keeps another place beside it.
+    property string mode: "home"
 
-    // Row 0 is always "use my location"; results follow.
-    readonly property int rows: results.length + 1
+    // Setting home, row 0 is "use my location"; results follow.
+    readonly property int lead: mode === "home" ? 1 : 0
+    readonly property int rows: results.length + lead
 
     function reset() {
       results = []
       cursor = 0
       placeField.text = ""
+      busy = false
     }
 
     function pick(i) {
+      if (mode === "add") {
+        var r = results[i]
+        if (r) root.addPlace(r)
+        return
+      }
       if (i <= 0) root.service.useAutomatic()
       else root.service.setLocation(results[i - 1])
       root.showPage("main")
@@ -228,7 +312,7 @@ Panel {
     onExited: {
       placeSearch.busy = false
       placeSearch.results = Model.parseGeocodingResults(out)
-      placeSearch.cursor = placeSearch.results.length > 0 ? 1 : 0
+      placeSearch.cursor = placeSearch.results.length > 0 ? placeSearch.lead : 0
       if (placeSearch.pending !== asked) Qt.callLater(placeSearch.start)
     }
   }
@@ -295,14 +379,24 @@ Panel {
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(500))
     contentHeight: panel.fittedContentHeight(
-      root.page === "main" ? mainPage.implicitHeight : (root.page === "settings" ? settingsPage.implicitHeight : placePage.implicitHeight))
+      root.page === "main" ? mainPage.implicitHeight
+        : root.page === "settings" ? settingsPage.implicitHeight
+        : root.page === "places" ? placesPage.implicitHeight
+        : placePage.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.page === "place"
       onMoveRequested: function(dx, dy) { root.handleMove(dx, dy) }
-      onActivateRequested: if (root.page === "main") root.service.openRadar()
+      onActivateRequested: {
+        if (root.page === "main") root.service.openRadar(root.viewPlace)
+        else if (root.page === "places") root.activatePlaceRow(root.placeCursor)
+      }
+      onDeleteRequested: {
+        var c = root.placeCursor
+        if (root.page === "places" && c >= 1 && c <= root.service.places.length) root.removePlace(root.service.places[c - 1].key)
+      }
       onCloseRequested: root.handleClose()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
@@ -310,9 +404,14 @@ Panel {
         if (key === "r") root.refresh()
         else if (key === "s") root.showPage(root.page === "settings" ? "main" : "settings")
         else if (key === "u") root.cycleUnits()
-        else if (key === "/" || key === "f") root.showPage("place")
-        else if (key === "c") root.service.copySummary()
-        else if (key === "o") root.service.openRadar()
+        else if (key === "/" || key === "f") root.showPage("place", root.page === "places" ? "add" : "home")
+        else if (key === "p") root.showPage(root.page === "places" ? "main" : "places")
+        else if ((key === "a" || key === "+") && root.service.places.length < Model.MAX_PLACES) root.showPage("place", "add")
+        else if (key === "[") root.stepPlace(-1)
+        else if (key === "]") root.stepPlace(1)
+        else if (key === "g") root.showPlace("")
+        else if (key === "c") root.service.copySummary(root.viewPlace)
+        else if (key === "o") root.service.openRadar(root.viewPlace)
         else if (key === "t") { root.selectDay(0); chart.clearSelection() }
         else if (key >= "1" && key <= "7") root.selectDay(parseInt(key, 10) - 1)
       }
@@ -348,28 +447,46 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(2)
 
-              Text {
+              Row {
                 width: parent.width
-                text: root.service.placeName || Model.APP_NAME
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
+                spacing: Style.space(8)
 
-                HoverHandler { cursorShape: Qt.PointingHandCursor }
-                TapHandler { onTapped: root.showPage("place") }
+                Text {
+                  id: viewTitle
+                  width: Math.min(implicitWidth, parent.width - (viewRegion.visible ? viewRegion.implicitWidth + parent.spacing : 0))
+                  text: root.viewName || Model.APP_NAME
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: true
+                  elide: Text.ElideRight
+
+                  HoverHandler { cursorShape: Qt.PointingHandCursor }
+                  TapHandler { onTapped: root.away ? root.showPage("places") : root.showPage("place") }
+                }
+
+                // Away from home, say which Springfield this is.
+                Text {
+                  id: viewRegion
+                  visible: root.away && text !== ""
+                  anchors.baseline: viewTitle.baseline
+                  text: root.away ? root.viewPlace.description : ""
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
               }
 
               Text {
                 width: parent.width
-                readonly property bool trouble: root.service.lastError !== "" && (root.service.stale || !root.fc)
+                readonly property bool trouble: !root.away && root.service.lastError !== "" && (root.service.stale || !root.fc)
                 text: trouble
                   ? root.service.lastError
                   : root.fc
                     ? Model.weekday(root.lms) + " " + Model.clockText(root.lms, root.use24) + "  ·  updated " + Model.ageText(root.fc.fetchedAt, root.service.nowMs)
-                    : "Looking at the sky…"
-                color: trouble ? Color.urgent : root.dim
+                    : root.away ? "Looking at the sky over " + root.viewName + "…" : "Looking at the sky…"
+                color: trouble ? root.urgent : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
@@ -383,21 +500,29 @@ Panel {
               spacing: Style.space(2)
 
               PanelActionButton {
-                iconText: "󰍎"
-                tooltipText: "Change location  /"
+                visible: root.away
+                iconText: "󰋜"
+                tooltipText: "Back home  g"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                onClicked: root.showPage("place")
+                onClicked: root.showPlace("")
+              }
+              PanelActionButton {
+                iconText: "󰇧"
+                tooltipText: "Places  p"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.showPage("places")
               }
               PanelActionButton {
                 id: refreshButton
                 iconText: "󰑐"
-                tooltipText: root.service.loading ? "Refreshing…" : "Refresh  r"
+                tooltipText: root.viewLoading ? "Refreshing…" : "Refresh  r"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.refresh()
                 RotationAnimator on rotation {
-                  running: root.service.loading
+                  running: root.viewLoading
                   from: 0; to: 360; duration: 900; loops: Animation.Infinite
                   onRunningChanged: if (!running) refreshButton.rotation = 0
                 }
@@ -422,9 +547,9 @@ Panel {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
               iconSize: Style.space(72)
-              kind: root.service.kind
-              night: root.service.night
-              strength: root.service.strength
+              kind: view.kind
+              night: view.night
+              strength: view.strength
               moonPhase: root.service.moonPhase
               iconColor: root.foreground
               sunColor: root.sunTint
@@ -489,15 +614,15 @@ Panel {
               Row {
                 anchors.right: parent.right
                 spacing: Style.space(10)
-                visible: !!root.service.todayData
+                visible: !!view.todayData
                 Text {
-                  text: "H " + (root.service.todayData ? Model.tempText(root.service.todayData.max, root.imperial) : "")
+                  text: "H " + (view.todayData ? Model.tempText(view.todayData.max, root.imperial) : "")
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
                 Text {
-                  text: "L " + (root.service.todayData ? Model.tempText(root.service.todayData.min, root.imperial) : "")
+                  text: "L " + (view.todayData ? Model.tempText(view.todayData.min, root.imperial) : "")
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -510,11 +635,23 @@ Panel {
           Text {
             Layout.fillWidth: true
             visible: text !== ""
-            text: root.service.sentence
+            text: view.sentence
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.subtitle
             lineHeight: 1.25
+            wrapMode: Text.WordWrap
+          }
+
+          // Away from home: how it compares, and what time it is there.
+          Text {
+            Layout.fillWidth: true
+            Layout.topMargin: -Style.space(4)
+            visible: root.away && text !== ""
+            text: root.away ? Model.compareLine(root.fc, root.service.forecast, root.imperial, root.service.placeName) : ""
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
 
@@ -528,7 +665,7 @@ Panel {
               for (var i = 0; i < slots.length; i++) p = Math.max(p, slots[i].precip)
               return p
             }
-            visible: slots.length > 0 && (root.service.outlook.state === "now" || root.service.outlook.state === "soon")
+            visible: slots.length > 0 && (view.outlook.state === "now" || view.outlook.state === "soon")
             implicitHeight: Style.space(44)
 
             Rectangle {
@@ -638,8 +775,8 @@ Panel {
                 width: parent.width
                 height: Style.space(28)
                 radius: Style.cornerRadius
-                color: selected ? Style.selectedFillFor(root.foreground, Color.accent)
-                  : rowMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+                color: selected ? Style.selectedFillFor(root.foreground, root.accent)
+                  : rowMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
 
                 Text {
                   id: dayName
@@ -811,14 +948,14 @@ Panel {
             }
 
             Tile {
-              readonly property real uv: root.now ? (root.now.isDay ? root.now.uv : (root.service.todayData ? root.service.todayData.uvMax : NaN)) : NaN
+              readonly property real uv: root.now ? (root.now.isDay ? root.now.uv : (view.todayData ? view.todayData.uvMax : NaN)) : NaN
               label: root.now && !root.now.isDay ? "UV TODAY" : "UV"
               value: isNaN(uv) ? "—" : String(Math.round(uv))
               sub: Model.uvLabel(uv)
             }
 
             Tile {
-              readonly property var aqi: Model.aqiReading(root.service.air, root.imperial)
+              readonly property var aqi: Model.aqiReading(view.air, root.imperial)
               label: aqi ? "AIR" : "PRESSURE"
               value: aqi ? String(aqi.value) : (root.now ? Model.pressureText(root.now.pressure, root.imperial) : "—")
               sub: aqi ? aqi.label : Model.pressureTrend(root.fc, root.lms)
@@ -829,8 +966,8 @@ Panel {
             id: sunArc
             Layout.fillWidth: true
             Layout.preferredHeight: implicitHeight
-            day: root.service.todayData
-            yesterday: root.service.yesterdayData
+            day: view.todayData
+            yesterday: view.yesterdayData
             lms: root.lms
             use24: root.use24
             moonPhase: root.service.moonPhase
@@ -848,18 +985,262 @@ Panel {
             Text {
               id: footLeft
               anchors.left: parent.left
-              text: root.service.stale ? "Open-Meteo  ·  an older forecast" : "Open-Meteo"
-              color: root.service.stale ? Color.urgent : root.dim
+              readonly property bool old: root.away ? (root.fc && Date.now() - root.fc.fetchedAt > root.service.refreshMinutes * 60000 * 2) : root.service.stale
+              text: old ? "Open-Meteo  ·  an older forecast" : "Open-Meteo"
+              color: old ? root.urgent : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
             Text {
               anchors.right: parent.right
-              text: "← → hours   ↑ ↓ days   u units   o radar   s settings"
+              text: root.service.places.length > 0 ? "← → hours   ↑ ↓ days   [ ] places   p list" : "← → hours   ↑ ↓ days   p places"
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+        }
+      }
+
+      // ==== Places =========================================================
+      // Home and the other places you keep, each with its sky, its clock
+      // and its temperature. Open one for the whole forecast there.
+      Flickable {
+        id: placesFlick
+        anchors.fill: parent
+        visible: root.page === "places"
+        contentWidth: width
+        contentHeight: placesPage.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+
+        ColumnLayout {
+          id: placesPage
+          width: placesFlick.width
+          spacing: Style.space(6)
+
+          Item {
+            Layout.fillWidth: true
+            implicitHeight: Math.max(placesTitle.implicitHeight, placesBack.height)
+            Column {
+              id: placesTitle
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+              Text {
+                text: "Places"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+              }
+              Text {
+                text: root.service.places.length === 0 ? "Keep an eye on somewhere else" : "Home and " + root.service.places.length + " more"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+            PanelActionButton {
+              id: placesBack
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰁍"
+              tooltipText: "Back"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.showPage("main")
+            }
+          }
+
+          PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
+
+          Repeater {
+            model: root.service.places.length + 2
+
+            Rectangle {
+              id: placeCard
+              required property int index
+              readonly property bool isHome: index === 0
+              readonly property bool isAdd: index === root.service.places.length + 1
+              readonly property var place: !isHome && !isAdd ? root.service.places[index - 1] : null
+              readonly property var forecast: isHome ? root.service.forecast : (place ? (root.service.placeForecasts[place.key] || null) : null)
+              readonly property var cur: forecast ? forecast.current : null
+              readonly property real there: forecast ? Model.nowLocal(root.service.nowMs, forecast.offset) : 0
+              readonly property var day: forecast ? Model.today(forecast, there) : null
+              readonly property bool hot: index === root.placeCursor || cardMouse.containsMouse
+              readonly property bool current: !isAdd && (isHome ? root.viewKey === "" : place && root.viewKey === place.key)
+
+              Layout.fillWidth: true
+              implicitHeight: isAdd ? Style.space(40) : Style.space(56)
+              radius: Style.cornerRadius
+              color: hot ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
+              border.width: current ? 1 : 0
+              border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.5)
+
+              // ---- Add a place
+              Row {
+                visible: placeCard.isAdd
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(12)
+                Text {
+                  text: "󰐕"
+                  color: placeCard.hot ? root.accent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.iconLarge
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  text: root.service.places.length >= Model.MAX_PLACES ? "Eight is the most — remove one to add another" : "Add a place"
+                  color: placeCard.hot ? root.accent : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              // ---- A place
+              SkyIcon {
+                id: cardIcon
+                visible: !placeCard.isAdd
+                x: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                iconSize: Style.space(30)
+                kind: placeCard.cur ? Model.iconKind(placeCard.cur.code) : "cloudy"
+                night: placeCard.cur ? !placeCard.cur.isDay : false
+                strength: placeCard.cur ? Model.condition(placeCard.cur.code).strength : 1
+                moonPhase: root.service.moonPhase
+                iconColor: root.foreground
+                moonColor: root.foreground
+                sunColor: root.sunTint
+                wetColor: root.wetTint
+                boltColor: root.boltTint
+                animated: placeCard.hot && root.service.animate
+                opacity: placeCard.cur ? 1 : 0.35
+              }
+
+              Column {
+                visible: !placeCard.isAdd
+                anchors.left: cardIcon.right
+                anchors.leftMargin: Style.space(14)
+                anchors.right: cardClock.left
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Item {
+                  width: parent.width
+                  implicitHeight: cardName.implicitHeight
+                  Text {
+                    id: cardName
+                    width: Math.min(implicitWidth, parent.width - Style.space(20))
+                    text: placeCard.isHome ? (root.service.placeName || "Home") : (placeCard.place ? placeCard.place.name : "")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+                  Text {
+                    visible: placeCard.isHome
+                    anchors.left: cardName.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.verticalCenter: cardName.verticalCenter
+                    text: "󰋜"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+                Text {
+                  width: parent.width
+                  text: placeCard.cur
+                    ? Model.conditionLabel(placeCard.cur.code, placeCard.cur.isDay) + (placeCard.day ? "  ·  H " + Model.tempText(placeCard.day.max, root.imperial) + "  L " + Model.tempText(placeCard.day.min, root.imperial) : "")
+                    : (root.service.fetchingPlace !== "" && placeCard.place && root.service.fetchingPlace === placeCard.place.key ? "Looking at the sky…" : (placeCard.place ? placeCard.place.description : ""))
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+              }
+
+              // Their clock, and how far it is from yours.
+              Column {
+                id: cardClock
+                visible: !placeCard.isAdd && !!placeCard.forecast
+                anchors.right: cardTemp.left
+                anchors.rightMargin: Style.space(14)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+                Text {
+                  anchors.right: parent.right
+                  text: placeCard.forecast ? Model.clockText(placeCard.there, root.use24) : ""
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.features: { "tnum": 1 }
+                }
+                Text {
+                  anchors.right: parent.right
+                  text: placeCard.isHome ? "here" : (placeCard.forecast && root.service.forecast ? Model.offsetText(placeCard.forecast.offset, root.service.forecast.offset) : "")
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Text {
+                id: cardTemp
+                visible: !placeCard.isAdd
+                anchors.right: removeButton.visible ? removeButton.left : parent.right
+                anchors.rightMargin: removeButton.visible ? Style.space(4) : Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(46)
+                horizontalAlignment: Text.AlignRight
+                text: placeCard.cur ? Model.tempText(placeCard.cur.temp, root.imperial) : "—"
+                color: placeCard.cur ? Model.tempColor(placeCard.cur.temp, root.palette) : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+                font.features: { "tnum": 1 }
+              }
+
+              MouseArea {
+                id: cardMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onPositionChanged: root.placeCursor = placeCard.index
+                onClicked: root.activatePlaceRow(placeCard.index)
+              }
+
+              PanelActionButton {
+                id: removeButton
+                visible: !!placeCard.place && placeCard.hot
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰅖"
+                tooltipText: "Remove  x"
+                foreground: root.dim
+                hoverColor: root.urgent
+                fontFamily: root.fontFamily
+                onClicked: root.removePlace(placeCard.place.key)
+              }
+            }
+          }
+
+          Item { Layout.fillWidth: true; implicitHeight: Style.space(4) }
+
+          Text {
+            Layout.fillWidth: true
+            text: "↑ ↓ choose   ·   Return open   ·   a add   ·   x remove   ·   [ ] step through places from the forecast"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
         }
       }
@@ -1002,7 +1383,7 @@ Panel {
             id: placeTitle
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Location"
+            text: placeSearch.mode === "add" ? "Add a place" : "Location"
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -1016,21 +1397,21 @@ Panel {
             tooltipText: "Back"
             foreground: root.foreground
             fontFamily: root.fontFamily
-            onClicked: root.showPage("main")
+            onClicked: root.showPage(placeSearch.mode === "add" ? "places" : "main")
           }
         }
 
         TextField {
           id: placeField
           Layout.fillWidth: true
-          placeholderText: "Search for a city"
+          placeholderText: placeSearch.mode === "add" ? "A city to keep an eye on" : "Search for a city"
           foreground: root.foreground
           font.family: root.fontFamily
           onTextChanged: if (root.page === "place") geocodeDebounce.restart()
 
           Keys.onPressed: function(event) {
             if (event.key === Qt.Key_Escape) {
-              root.showPage("main"); event.accepted = true
+              root.showPage(placeSearch.mode === "add" ? "places" : "main"); event.accepted = true
             } else if (event.key === Qt.Key_Down) {
               placeSearch.cursor = Math.min(placeSearch.rows - 1, placeSearch.cursor + 1); event.accepted = true
             } else if (event.key === Qt.Key_Up) {
@@ -1051,19 +1432,20 @@ Panel {
             Rectangle {
               id: placeRow
               required property int index
-              readonly property var result: index > 0 ? placeSearch.results[index - 1] : null
+              readonly property bool isAuto: index < placeSearch.lead
+              readonly property var result: isAuto ? null : placeSearch.results[index - placeSearch.lead]
               readonly property bool hot: index === placeSearch.cursor
               width: parent.width
               height: Style.space(34)
               radius: Style.cornerRadius
-              color: hot ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+              color: hot ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
 
               Text {
                 id: placeIcon
                 x: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
-                text: placeRow.index === 0 ? "󰆤" : "󰍎"
-                color: placeRow.hot ? Style.hoverStateColor(root.foreground, Color.accent) : root.dim
+                text: placeRow.isAuto ? "󰆤" : "󰍎"
+                color: placeRow.hot ? Style.hoverStateColor(root.foreground, root.accent) : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.icon
               }
@@ -1072,11 +1454,11 @@ Panel {
                 anchors.left: placeIcon.right
                 anchors.leftMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
-                text: placeRow.index === 0 ? "Use my location" : (placeRow.result ? placeRow.result.name : "")
-                color: placeRow.hot ? Style.hoverStateColor(root.foreground, Color.accent) : root.foreground
+                text: placeRow.isAuto ? "Use my location" : (placeRow.result ? placeRow.result.name : "")
+                color: placeRow.hot ? Style.hoverStateColor(root.foreground, root.accent) : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
-                font.bold: placeRow.index === 0 && root.service.automatic
+                font.bold: placeRow.isAuto && root.service.automatic
               }
               Text {
                 anchors.left: placeName.right
@@ -1084,7 +1466,7 @@ Panel {
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
-                text: placeRow.index === 0
+                text: placeRow.isAuto
                   ? (root.service.automatic ? "current  ·  from your network" : "from your network")
                   : (placeRow.result ? placeRow.result.description : "")
                 color: root.dim
@@ -1117,7 +1499,9 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "Shared with Omarchy's own weather widget.  ↑ ↓ choose  ·  Return pick  ·  Esc back"
+          text: placeSearch.mode === "add"
+            ? "Kept in Isobar's settings, beside home.  ↑ ↓ choose  ·  Return add  ·  Esc back"
+            : "Shared with Omarchy's own weather widget.  ↑ ↓ choose  ·  Return pick  ·  Esc back"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

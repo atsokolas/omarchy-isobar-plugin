@@ -17,6 +17,7 @@ A small sky on the bar beside the temperature. When rain is on its way, the bar 
 - **The small facts.** A wind compass that points where the wind is going, humidity with the dew point, UV, air quality (or the pressure trend), and the sun's arc across today. It also shows how much daylight you gained or lost since yesterday, which tells you which way the year is turning.
 - **In your theme.** Every colour comes from the current Omarchy theme's `colors.toml`: a yellow sun, blue rain, and a thermometer that runs from the theme's magenta through blue, cyan and green to its red. Change the theme and the panel changes with it.
 - **Never blank.** The last good forecast is cached on disk, so the bar has a temperature the moment the shell starts. If the network drops, the panel keeps the last forecast, says how old it is, and retries with backoff (30s, 1m, 2m … up to 10m). After the machine wakes from sleep it fetches a fresh forecast within a minute.
+- **Places.** Keep up to eight other cities beside home. The Places page shows each one's sky, temperature and local time, and how far ahead or behind you it is ("14 hours ahead"). Open one to see the full forecast there: its sentence, its hours, its week, its sun. A line underneath compares it with home ("6° warmer than Duluth · 14 hours ahead"). From the forecast, `[` and `]` step from place to place.
 - **A heads-up, if you want one.** An optional quiet toast about half an hour before rain or snow, once per spell.
 
 ## Install
@@ -39,6 +40,19 @@ Isobar reads and writes `~/.local/state/omarchy/settings/weather.json`, the same
 
 In the panel, press `/` or click the place name, then search for a city. "Use my location" goes back to automatic.
 
+## Places
+
+Press `p` (or click the globe) for Places, then `a` to add a city. Places are stored in the widget's `shell.json` entry, so they move with the rest of your config. The bar always shows home.
+
+```json
+{
+  "id": "atsokolas.isobar",
+  "places": [
+    { "name": "Tokyo", "description": "Tokyo, Japan", "latitude": 35.6895, "longitude": 139.6917 }
+  ]
+}
+```
+
 ## Keys
 
 | Key | Action |
@@ -46,12 +60,17 @@ In the panel, press `/` or click the place name, then search for a city. "Use my
 | `←` `→` | Read the hours on the chart |
 | `↑` `↓`, `1`–`7` | Pick a day |
 | `t` | Back to now |
-| `/` | Change location |
+| `p` | Places |
+| `[` `]` | Previous / next place |
+| `g` | Back home |
+| `/` | Change your location |
 | `u` | Switch between °C and °F |
 | `o` / `Return` | Open the radar at windy.com |
 | `c` | Copy the forecast |
 | `r` | Refresh |
 | `s` | Settings |
+
+On the Places page: `↑` `↓` choose, `Return` opens, `a` adds, `x` removes.
 
 On the bar: left click opens the panel, middle click refreshes, and right click copies the forecast.
 
@@ -66,6 +85,7 @@ Change these on the widget's `shell.json` entry or on the panel's settings page.
 | `notify` | `false` | A quiet toast about half an hour before rain or snow |
 | `animate` | `true` | The moving sky on hover and in the panel |
 | `refreshMinutes` | `15` | How often to fetch, 5–180 |
+| `places` | `[]` | Other cities to keep an eye on, up to eight |
 
 ## IPC
 
@@ -74,6 +94,7 @@ omarchy-shell atsokolas.isobar toggle
 omarchy-shell atsokolas.isobar now        # 56° Light rain
 omarchy-shell atsokolas.isobar summary    # Rain until about 8 pm. 3° cooler than yesterday.
 omarchy-shell atsokolas.isobar place
+omarchy-shell atsokolas.isobar places     # Tokyo  62°  Mostly clear  7:25 am
 omarchy-shell atsokolas.isobar refresh
 ```
 

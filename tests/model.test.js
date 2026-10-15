@@ -309,3 +309,49 @@ test("the real afternoon reads as a sentence", () => {
   assert.match(s, /^[A-Z].*\.$/)
   assert.ok(s.length < 140, s)
 })
+
+test("places are kept clean: named, located, unique, eight at most", () => {
+  const raw = [
+    { name: "Tokyo", latitude: 35.6895, longitude: 139.6917, description: "Japan" },
+    { name: "Tokyo again", latitude: 35.68951, longitude: 139.69171 },
+    { name: "", latitude: 1, longitude: 2 },
+    { name: "Nowhere" },
+    null
+  ]
+  const places = Model.normalizePlaces(raw)
+  assert.equal(places.length, 1)
+  assert.equal(places[0].key, "35.690,139.692")
+  assert.deepEqual(Model.normalizePlaces("nonsense"), [])
+})
+
+test("adding and removing places", () => {
+  let list = []
+  list = Model.addPlace(list, { name: "Lisbon", description: "Portugal", latitude: 38.71667, longitude: -9.13333 })
+  assert.deepEqual(list, [{ name: "Lisbon", description: "Portugal", latitude: 38.7167, longitude: -9.1333 }])
+  assert.equal(Model.addPlace(list, { name: "Lisboa", latitude: 38.7167, longitude: -9.1333 }).length, 1)
+  for (let i = 0; i < 10; i++) list = Model.addPlace(list, { name: "P" + i, latitude: i, longitude: i })
+  assert.equal(list.length, Model.MAX_PLACES)
+  assert.equal(list[0].name, "Lisbon", "a full list refuses rather than dropping a place you chose")
+  list = Model.removePlace(list, Model.placeKey({ latitude: 38.7167, longitude: -9.1333 }))
+  assert.equal(list.length, Model.MAX_PLACES - 1)
+  assert.ok(!list.some(p => p.name === "Lisbon"))
+})
+
+test("the time difference reads the way people say it", () => {
+  assert.equal(Model.offsetText(32400, -18000), "14 hours ahead")
+  assert.equal(Model.offsetText(19800, 0), "5½ hours ahead")
+  assert.equal(Model.offsetText(20700, 0), "5¾ hours ahead")
+  assert.equal(Model.offsetText(-21600, -18000), "1 hour behind")
+  assert.equal(Model.offsetText(1800, 0), "half an hour ahead")
+  assert.equal(Model.offsetText(0, 2700), "three quarters of an hour behind")
+  assert.equal(Model.offsetText(-18000, -18000), "same time")
+})
+
+test("somewhere else is compared with home", () => {
+  const here = { offset: -18000, current: { temp: 13 } }
+  const tokyo = { offset: 32400, current: { temp: 22 } }
+  assert.equal(Model.compareLine(tokyo, here, false, "Duluth"), "9° warmer than Duluth  ·  14 hours ahead")
+  assert.equal(Model.compareLine({ offset: -18000, current: { temp: 12 } }, here, false, "Duluth"), "About as warm as Duluth  ·  same time")
+  assert.match(Model.compareLine({ offset: 0, current: { temp: 3 } }, here, true, ""), /^18° colder than home/)
+  assert.equal(Model.compareLine(null, here, false, "x"), "")
+})

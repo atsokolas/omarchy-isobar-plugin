@@ -577,7 +577,7 @@ function partOfDay(lms) {
 function skyPhrase(code, isDay) {
   var k = condition(code).kind
   if (k === "clear") return isDay ? "Sunny" : "Clear"
-  if (k === "partly") return "Partly cloudy"
+  if (k === "partly") return condition(code).label
   if (k === "cloudy") return "Cloudy"
   if (k === "fog") return "Foggy"
   return capital(condition(code).noun || "Cloudy")
@@ -987,6 +987,81 @@ function rainKey(outlook) {
   return dateKey(outlook.startMs) + "T" + new Date(outlook.startMs).getUTCHours()
 }
 
+
+// ---------------------------------------------------------------------------
+// Places: other cities kept beside home.
+
+var MAX_PLACES = 8
+
+function placeKey(p) {
+  if (!hasCoordinates(p)) return ""
+  return num(p.latitude).toFixed(3) + "," + num(p.longitude).toFixed(3)
+}
+
+// The `places` setting, cleaned: named, located, no duplicates, at most eight.
+function normalizePlaces(list) {
+  var out = [], seen = {}
+  if (!list || typeof list.length !== "number") return out
+  for (var i = 0; i < list.length && out.length < MAX_PLACES; i++) {
+    var p = list[i]
+    if (!p || !trim(p.name) || !hasCoordinates(p)) continue
+    var key = placeKey(p)
+    if (seen[key]) continue
+    seen[key] = true
+    out.push({ name: trim(p.name), description: trim(p.description), latitude: num(p.latitude), longitude: num(p.longitude), key: key })
+  }
+  return out
+}
+
+// A place as it is stored in shell.json — no derived fields.
+function storedPlace(p) {
+  return { name: trim(p.name), description: trim(p.description), latitude: Math.round(num(p.latitude) * 10000) / 10000, longitude: Math.round(num(p.longitude) * 10000) / 10000 }
+}
+
+function addPlace(list, p) {
+  var places = normalizePlaces(list)
+  var key = placeKey(p)
+  if (!key) return places.map(storedPlace)
+  // Already kept: leave the list as it is. Full: refuse rather than quietly
+  // dropping somewhere you chose.
+  if (places.some(function(q) { return q.key === key }) || places.length >= MAX_PLACES) return places.map(storedPlace)
+  places.push(p)
+  return normalizePlaces(places).map(storedPlace)
+}
+
+function removePlace(list, key) {
+  return normalizePlaces(list).filter(function(q) { return q.key !== key }).map(storedPlace)
+}
+
+// "14 hours ahead", "5½ hours behind", "same time".
+function offsetText(there, here) {
+  var d = (num(there) - num(here)) / 3600
+  if (isNaN(d)) return ""
+  if (Math.abs(d) < 0.01) return "same time"
+  var a = Math.abs(d), whole = Math.floor(a), frac = a - whole
+  var way = d > 0 ? "ahead" : "behind"
+  // Under an hour (Nepal, Newfoundland's neighbours) it's said in words.
+  if (whole === 0) return (frac >= 0.7 ? "three quarters of an hour " : frac >= 0.45 ? "half an hour " : "a quarter of an hour ") + way
+  var n = String(whole) + (frac >= 0.7 ? "¾" : frac >= 0.45 ? "½" : frac >= 0.2 ? "¼" : "")
+  return n + (n === "1" ? " hour " : " hours ") + way
+}
+
+// How somewhere else compares with home, in one line.
+function compareLine(there, here, imperial, homeName) {
+  if (!there || !here) return ""
+  var bits = []
+  var diff = deltaDegrees(there.current.temp - here.current.temp, imperial)
+  var home = homeName || "home"
+  if (!isNaN(diff)) {
+    if (diff >= 2) bits.push(diff + "° warmer than " + home)
+    else if (diff <= -2) bits.push(Math.abs(diff) + "° colder than " + home)
+    else bits.push("About as warm as " + home)
+  }
+  var off = offsetText(there.offset, here.offset)
+  if (off) bits.push(off)
+  return bits.join("  ·  ")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     APP_NAME: APP_NAME, HOUR_MS: HOUR_MS, DAY_MS: DAY_MS,
@@ -1011,6 +1086,8 @@ if (typeof module !== "undefined") {
     monotoneSegments: monotoneSegments, niceRange: niceRange, rangeSpan: rangeSpan, weekRange: weekRange,
     parseColors: parseColors, mix: mix, tempColor: tempColor,
     tooltipText: tooltipText, copyPayload: copyPayload, copyCommand: copyCommand, radarCommand: radarCommand,
-    toastCommand: toastCommand, saveLocationCommand: saveLocationCommand, rainKey: rainKey
+    toastCommand: toastCommand, saveLocationCommand: saveLocationCommand, rainKey: rainKey,
+    MAX_PLACES: MAX_PLACES, placeKey: placeKey, normalizePlaces: normalizePlaces, storedPlace: storedPlace,
+    addPlace: addPlace, removePlace: removePlace, offsetText: offsetText, compareLine: compareLine
   }
 }

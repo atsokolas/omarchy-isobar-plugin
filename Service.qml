@@ -61,20 +61,25 @@ Item {
 
   // Ticks on the minute, so ages and the sky stay honest.
   property real nowMs: Date.now()
-  readonly property real localNow: forecast ? Model.nowLocal(nowMs, forecast.offset) : nowMs
+  // Home, seen through the same lens the panel uses for every place.
+  readonly property WeatherView homeView: WeatherView {
+    forecast: root.forecast
+    air: root.air
+    imperial: root.imperial
+    use24: root.use24
+    nowMs: root.nowMs
+  }
 
-  readonly property var current: forecast ? forecast.current : null
-  readonly property var outlook: Model.precipOutlook(forecast, localNow)
-  readonly property var todayData: Model.today(forecast, localNow)
-  readonly property var yesterdayData: Model.yesterday(forecast, localNow)
-  readonly property var weekData: Model.week(forecast, localNow)
-  readonly property string sentence: Model.sentence(forecast, localNow, imperial, use24)
-
-  // The live sky, worked out once for the bar and the panel. `night` follows
-  // the forecast's own is_day flag, which knows about polar days.
-  readonly property string kind: current ? Model.iconKind(current.code) : "cloudy"
-  readonly property bool night: current ? !current.isDay : false
-  readonly property int strength: current ? Model.condition(current.code).strength : 1
+  readonly property real localNow: homeView.localNow
+  readonly property var current: homeView.current
+  readonly property var outlook: homeView.outlook
+  readonly property var todayData: homeView.todayData
+  readonly property var yesterdayData: homeView.yesterdayData
+  readonly property var weekData: homeView.weekData
+  readonly property string sentence: homeView.sentence
+  readonly property string kind: homeView.kind
+  readonly property bool night: homeView.night
+  readonly property int strength: homeView.strength
   readonly property real moonPhase: Model.moonPhase(nowMs)
 
   readonly property string tempLabel: current ? Model.tempText(current.temp, imperial) : ""
@@ -88,6 +93,93 @@ Item {
     _lastSky = kind
   }
 
+  // ---- Places --------------------------------------------------------------
+  // Other cities, kept in the widget's shell.json entry. Each gets the same
+  // full forecast as home, fetched one at a time behind it and cached.
+  readonly property var places: Model.normalizePlaces(setting("places", []))
+  property var placeForecasts: ({})
+  property var _placeQueue: []
+  readonly property string placesCachePath: cacheDir + "/places.json"
+  readonly property string fetchingPlace: placeProcess.running ? placeProcess.key : ""
+
+  function placeFor(key) {
+    for (var i = 0; i < places.length; i++) if (places[i].key === key) return places[i]
+    return null
+  }
+
+  function fetchPlaces(force) {
+    var queue = _placeQueue.slice()
+    for (var i = 0; i < places.length; i++) {
+      var p = places[i]
+      var have = placeForecasts[p.key]
+      var old = !have || Date.now() - have.fetchedAt > refreshMinutes * 60000
+      if ((force || old) && queue.indexOf(p.key) < 0) queue.push(p.key)
+    }
+    _placeQueue = queue
+    pumpPlaces()
+  }
+
+  function fetchPlace(key) {
+    if (_placeQueue.indexOf(key) < 0) _placeQueue = [key].concat(_placeQueue)
+    pumpPlaces()
+  }
+
+  function pumpPlaces() {
+    if (!active || placeProcess.running) return
+    while (_placeQueue.length > 0 && !placeFor(_placeQueue[0])) _placeQueue = _placeQueue.slice(1)
+    if (_placeQueue.length === 0) return
+    var p = placeFor(_placeQueue[0])
+    placeProcess.key = p.key
+    placeProcess.out = ""
+    placeProcess.command = Model.curl(Model.forecastQuery(p.latitude, p.longitude), 10)
+    placeProcess.running = true
+  }
+
+  function applyPlace(key, raw, ok) {
+    _placeQueue = _placeQueue.filter(function(k) { return k !== key })
+    var parsed = ok ? Model.parseForecast(raw, Date.now()) : null
+    if (parsed) {
+      var next = {}
+      for (var k in placeForecasts) next[k] = placeForecasts[k]
+      next[key] = parsed
+      placeForecasts = next
+      _placeRaw[key] = { fetchedAt: parsed.fetchedAt, raw: raw }
+      writePlacesCache()
+    }
+    Qt.callLater(pumpPlaces)
+  }
+
+  property var _placeRaw: ({})
+
+  function writePlacesCache() {
+    var entries = {}
+    for (var i = 0; i < places.length; i++) {
+      var e = _placeRaw[places[i].key]
+      if (e) entries[places[i].key] = e
+    }
+    placesCache.setText(JSON.stringify({ version: 1, entries: entries }) + "\n")
+  }
+
+  function loadPlacesCache(text) {
+    try {
+      var data = JSON.parse(String(text || ""))
+      if (!data || data.version !== 1 || !data.entries) return
+      var next = {}
+      for (var k in placeForecasts) next[k] = placeForecasts[k]
+      for (var key in data.entries) {
+        var e = data.entries[key]
+        if (next[key] && next[key].fetchedAt >= e.fetchedAt) continue
+        var parsed = Model.parseForecast(e.raw, e.fetchedAt)
+        if (!parsed) continue
+        next[key] = parsed
+        _placeRaw[key] = e
+      }
+      placeForecasts = next
+    } catch (err) {}
+  }
+
+  onPlacesChanged: Qt.callLater(function() { root.fetchPlaces(false) })
+
   // ---- Fetching ------------------------------------------------------------
   property string _forecastOut: ""
   property string _airOut: ""
@@ -98,6 +190,7 @@ Item {
     if (!active) return
     failures = 0
     fetch()
+    fetchPlaces(true)
   }
 
   function fetch() {
@@ -202,13 +295,16 @@ Item {
       placeName ? placeName + " · " + Model.tempText(current.temp, imperial) : ""))
   }
 
-  function openRadar() {
-    var cmd = location ? Model.radarCommand(location.latitude, location.longitude) : null
+  function openRadar(place) {
+    var where = place || location
+    var cmd = where ? Model.radarCommand(where.latitude, where.longitude) : null
     if (cmd) Quickshell.execDetached(cmd)
   }
 
-  function copySummary() {
-    var text = Model.copyPayload(forecast, localNow, imperial, use24, placeName)
+  function copySummary(place) {
+    var fc = place ? placeForecasts[place.key] : forecast
+    var lms = fc ? Model.nowLocal(nowMs, fc.offset) : localNow
+    var text = Model.copyPayload(fc, lms, imperial, use24, place ? place.name : placeName)
     if (text) Quickshell.execDetached(Model.copyCommand(text))
   }
 
@@ -291,6 +387,25 @@ Item {
     }
   }
 
+  FileView {
+    id: placesCache
+    path: root.placesCachePath
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadPlacesCache(text())
+  }
+
+  Process {
+    id: placeProcess
+    property string key: ""
+    property string out: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: placeProcess.out = text
+    }
+    onExited: function(code) { root.applyPlace(placeProcess.key, placeProcess.out, code === 0) }
+  }
+
   Process {
     id: nameLookup
     property string out: ""
@@ -320,7 +435,7 @@ Item {
     interval: root.refreshMinutes * 60000
     running: root.active
     repeat: true
-    onTriggered: root.fetch()
+    onTriggered: { root.fetch(); root.fetchPlaces(false) }
   }
 
   // On the minute. A gap of more than a few minutes between ticks means the
