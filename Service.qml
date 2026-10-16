@@ -109,7 +109,7 @@ Item {
   // full forecast as home, fetched one at a time behind it and cached.
   readonly property var places: Model.normalizePlaces(setting("places", []))
   // The ones you asked to see on the bar, after home.
-  readonly property var barPlaces: places.filter(function(p) { return p.onBar })
+  readonly property var barPlaces: places.filter(function(p) { return p.onBar }).slice(0, Model.MAX_BAR_PLACES)
   property var placeForecasts: ({})
   property var _placeQueue: []
   readonly property string placesCachePath: cacheDir + "/places.json"
@@ -211,7 +211,9 @@ Item {
   function fetch() {
     if (!active) return
     if (!location) {
-      if (!ipProcess.running) ipProcess.running = true
+      // A name with no coordinates is looked up; nothing at all, the network.
+      if (Model.trim(configured.name) !== "") lookUpName()
+      else if (!ipProcess.running) ipProcess.running = true
       return
     }
     if (forecastProcess.running) return
@@ -286,6 +288,16 @@ Item {
 
   function useAutomatic() { setLocation(null) }
 
+  function lookUpName() {
+    if (!active || nameLookup.running || Model.trim(configured.name) === "") return
+    nameLookup.out = ""
+    nameLookup.command = Model.curl(Model.geocodeQuery(configured.name), 6)
+    nameLookup.running = true
+  }
+
+  // A panel's fallback engine stays quiet until it is the only one.
+  onActiveChanged: if (active) Qt.callLater(fetch)
+
   onLocationKeyChanged: {
     if (locationKey === "") return
     if (forecast && !Model.sameLocation(forecast, location)) {
@@ -317,9 +329,14 @@ Item {
   property var alertsByKey: ({})
   property var _alertQueue: []
 
+  // Home's entry remembers where home was, so a move doesn't carry the old
+  // place's warnings along with it.
   function alertsFor(key) {
+    if (!alertsOn) return []
     var e = alertsByKey[key || ""]
-    return e ? e.alerts : []
+    if (!e) return []
+    if (!key && e.at !== locationKey) return []
+    return e.alerts
   }
 
   function coordsFor(key) {
@@ -332,7 +349,7 @@ Item {
     var where = coordsFor(key)
     if (!where || !Model.nwsCovers(where.latitude, where.longitude)) return
     var have = alertsByKey[key || ""]
-    if (have && Date.now() - have.fetchedAt < 5 * 60000) return
+    if (have && (key || have.at === locationKey) && Date.now() - have.fetchedAt < 5 * 60000) return
     if (_alertQueue.indexOf(key || "") < 0) _alertQueue = _alertQueue.concat([key || ""])
     pumpAlerts()
   }
@@ -344,17 +361,20 @@ Item {
     var where = coordsFor(key)
     if (!where) { Qt.callLater(pumpAlerts); return }
     alertProcess.key = key
+    alertProcess.at = key ? key : locationKey
     alertProcess.out = ""
     alertProcess.command = Model.alertsCommand(where.latitude, where.longitude)
     alertProcess.running = true
   }
 
-  function applyAlerts(key, raw, ok) {
+  function applyAlerts(key, at, raw, ok) {
     var list = ok ? Model.parseAlerts(raw, Date.now()) : null
+    // Home moved while this was in flight: it answers for somewhere else.
+    if (list && !key && at !== locationKey) list = null
     if (list) {
       var next = {}
       for (var k in alertsByKey) next[k] = alertsByKey[k]
-      next[key] = { fetchedAt: Date.now(), alerts: list }
+      next[key] = { fetchedAt: Date.now(), at: at, alerts: list }
       alertsByKey = next
       alertsCache.setText(JSON.stringify({ version: 1, entries: next }) + "\n")
       if (key === "") announceAlerts(list)
@@ -378,16 +398,22 @@ Item {
   property bool memoryLoaded: false
 
   function remember(next) {
-    memory = Model.pruneState(next, Date.now())
-    stateFile.setText(JSON.stringify(memory) + "\n")
+    var pruned = Model.pruneState(next, Date.now())
+    var text = JSON.stringify(pruned)
+    if (text === JSON.stringify(memory)) return
+    memory = pruned
+    stateFile.setText(text + "\n")
   }
 
   function announceAlerts(list) {
     if (!memoryLoaded || !alertsOn) return
     var next = { seen: memory.seen, notes: memory.notes, alerts: {} }
     for (var k in memory.alerts) next.alerts[k] = memory.alerts[k]
-    var fresh = Model.activeAlerts(list, Date.now()).filter(function(a) { return !next.alerts[a.id] })
-    if (fresh.length === 0) return
+    // Updates to an alert already mentioned are remembered, not announced.
+    var live = Model.activeAlerts(list, Date.now())
+    var fresh = Model.freshAlerts(list, next.alerts, Date.now())
+    var known = live.filter(function(a) { return fresh.indexOf(a) < 0 && !next.alerts[a.id] })
+    for (var j = 0; j < known.length; j++) next.alerts[known[j].id] = Date.now()
     for (var i = 0; i < fresh.length; i++) {
       var a = fresh[i]
       next.alerts[a.id] = Date.now()
@@ -456,15 +482,14 @@ Item {
     onLoaded: {
       root.configured = Model.parseLocationFile(text())
       if (!Model.hasCoordinates(root.configured) && Model.trim(root.configured.name) !== "") {
-        nameLookup.command = Model.curl(Model.geocodeQuery(root.configured.name), 6)
-        nameLookup.running = true
-      } else if (root.automatic && !root.ipLocation && !ipProcess.running) {
+        if (!root.namedLocation || root.namedLocation.name !== root.configured.name) root.lookUpName()
+      } else if (root.active && root.automatic && !root.ipLocation && !ipProcess.running) {
         ipProcess.running = true
       }
     }
     onLoadFailed: {
       root.configured = Model.parseLocationFile("")
-      if (!root.ipLocation && !ipProcess.running) ipProcess.running = true
+      if (root.active && !root.ipLocation && !ipProcess.running) ipProcess.running = true
     }
   }
 
@@ -562,12 +587,13 @@ Item {
   Process {
     id: alertProcess
     property string key: ""
+    property string at: ""
     property string out: ""
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: alertProcess.out = text
     }
-    onExited: function(code) { root.applyAlerts(alertProcess.key, alertProcess.out, code === 0) }
+    onExited: function(code) { root.applyAlerts(alertProcess.key, alertProcess.at, alertProcess.out, code === 0) }
   }
 
   FileView {
