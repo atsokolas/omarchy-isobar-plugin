@@ -34,6 +34,10 @@ BarWidget {
     if (panelLoader.item && panelLoader.item.close) panelLoader.item.close()
   }
 
+  function openPlace(key) {
+    if (panelLoader.item && panelLoader.item.openPlace) panelLoader.item.openPlace(key)
+  }
+
   readonly property var service: panelLoader.item ? panelLoader.item.service : null
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -45,6 +49,8 @@ BarWidget {
   readonly property bool ready: !!(service && service.current)
   readonly property string tempLabel: service ? service.tempLabel : ""
   readonly property string hint: service && !root.vertical ? service.hint : ""
+  // A vertical bar has no room beside home, so it keeps to home.
+  readonly property var barPlaces: service && !root.vertical ? service.barPlaces : []
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -76,7 +82,7 @@ BarWidget {
         var fc = s.placeForecasts[p.key]
         if (!fc) return p.name + "  —"
         var lms = Model.nowLocal(s.nowMs, fc.offset)
-        return p.name + "  " + Model.tempText(fc.current.temp, s.imperial) + "  " + Model.conditionLabel(fc.current.code, fc.current.isDay) + "  " + Model.clockText(lms, s.use24)
+        return p.name + "  " + Model.tempText(fc.current.temp, s.imperial) + "  " + Model.conditionLabel(fc.current.code, fc.current.isDay) + "  " + Model.clockText(lms, s.use24) + (p.onBar ? "  (bar)" : "")
       }).join("\n")
     }
   }
@@ -125,9 +131,10 @@ BarWidget {
 
       readonly property real gap: Style.spaceReal(6)
       readonly property bool hintVisible: root.hint !== ""
+      readonly property real homeWidth: icon.width + (tempText.visible ? gap + tempText.implicitWidth : 0) + (hintVisible ? gap + hintText.implicitWidth : 0)
       readonly property real implicitWidth: root.vertical
         ? icon.width
-        : icon.width + (tempText.visible ? gap + tempText.implicitWidth : 0) + (hintVisible ? gap + hintText.implicitWidth : 0)
+        : homeWidth + (placesRow.visible ? gap * 2 + placesRow.implicitWidth : 0)
       readonly property real implicitHeight: root.vertical ? icon.height + (tempText.visible ? Style.spaceReal(2) + tempText.implicitHeight : 0) : icon.height
 
       SkyIcon {
@@ -170,6 +177,74 @@ BarWidget {
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
         renderType: Text.NativeRendering
+      }
+
+      // Places you put on the bar, after home: "Tokyo ☀ 68°". Each opens
+      // straight to its own forecast.
+      Row {
+        id: placesRow
+        visible: root.barPlaces.length > 0
+        x: button.scaledHorizontalMargin + content.homeWidth + content.gap * 2
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: content.gap * 2
+
+        Repeater {
+          model: root.barPlaces
+
+          Item {
+            id: barPlace
+            required property var modelData
+            readonly property var fc: root.service ? (root.service.placeForecasts[modelData.key] || null) : null
+            readonly property var cur: fc ? fc.current : null
+            implicitWidth: placeName.implicitWidth + content.gap + placeIcon.width + content.gap + placeTemp.implicitWidth
+            implicitHeight: content.height
+            height: content.height
+
+            Text {
+              id: placeName
+              anchors.verticalCenter: parent.verticalCenter
+              text: Model.barName(barPlace.modelData.name)
+              color: Qt.rgba(button.foreground.r, button.foreground.g, button.foreground.b, 0.62)
+              font.family: button.fontFamily
+              font.pixelSize: button.fontSize
+              renderType: Text.NativeRendering
+            }
+
+            SkyIcon {
+              id: placeIcon
+              x: placeName.implicitWidth + content.gap
+              anchors.verticalCenter: parent.verticalCenter
+              kind: barPlace.cur ? Model.iconKind(barPlace.cur.code) : "cloudy"
+              night: barPlace.cur ? !barPlace.cur.isDay : false
+              strength: barPlace.cur ? Model.condition(barPlace.cur.code).strength : 1
+              moonPhase: root.service ? root.service.moonPhase : 0.5
+              iconSize: Math.round(button.fontSize * 1.05)
+              iconColor: button.foreground
+              animated: !!(root.service && root.service.animate) && placeMouse.containsMouse
+              opacity: barPlace.cur ? 1 : 0.45
+            }
+
+            Text {
+              id: placeTemp
+              x: placeIcon.x + placeIcon.width + content.gap
+              anchors.verticalCenter: parent.verticalCenter
+              text: barPlace.cur ? Model.tempText(barPlace.cur.temp, root.service.imperial) : "—"
+              color: button.foreground
+              font.family: button.fontFamily
+              font.pixelSize: button.fontSize
+              font.features: { "tnum": 1 }
+              renderType: Text.NativeRendering
+            }
+
+            MouseArea {
+              id: placeMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.openPlace(barPlace.modelData.key)
+            }
+          }
+        }
       }
 
       HoverHandler { id: hover }

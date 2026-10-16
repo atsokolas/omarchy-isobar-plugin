@@ -204,6 +204,17 @@ Panel {
     showPlace(Model.placeKey(p))
   }
 
+  function togglePlaceOnBar(key) {
+    persistSettings({ places: Model.togglePlaceOnBar(service.places, key) })
+  }
+
+  // From the bar: straight to that place's forecast, or shut if it's already up.
+  function openPlace(key) {
+    if (root.opened && root.page === "main" && root.viewKey === (key || "")) { root.close(); return }
+    showPlace(key)
+    if (!root.opened) openFromHotkey()
+  }
+
   function removePlace(key) {
     persistSettings({ places: Model.removePlace(service.places, key) })
     if (viewKey === key) viewKey = ""
@@ -406,6 +417,7 @@ Panel {
         else if (key === "u") root.cycleUnits()
         else if (key === "/" || key === "f") root.showPage("place", root.page === "places" ? "add" : "home")
         else if (key === "p") root.showPage(root.page === "places" ? "main" : "places")
+        else if (key === "b" && root.page === "places" && root.placeCursor >= 1 && root.placeCursor <= root.service.places.length) root.togglePlaceOnBar(root.service.places[root.placeCursor - 1].key)
         else if ((key === "a" || key === "+") && root.service.places.length < Model.MAX_PLACES) root.showPage("place", "add")
         else if (key === "[") root.stepPlace(-1)
         else if (key === "]") root.stepPlace(1)
@@ -1195,8 +1207,8 @@ Panel {
               Text {
                 id: cardTemp
                 visible: !placeCard.isAdd
-                anchors.right: removeButton.visible ? removeButton.left : parent.right
-                anchors.rightMargin: removeButton.visible ? Style.space(4) : Style.space(12)
+                anchors.right: cardActions.width > 0 ? cardActions.left : parent.right
+                anchors.rightMargin: cardActions.width > 0 ? Style.space(4) : Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
                 width: Style.space(46)
                 horizontalAlignment: Text.AlignRight
@@ -1216,18 +1228,39 @@ Panel {
                 onClicked: root.activatePlaceRow(placeCard.index)
               }
 
-              PanelActionButton {
-                id: removeButton
-                visible: !!placeCard.place && placeCard.hot
+              // On the bar stays lit, so you can see which ones are up there.
+              Row {
+                id: cardActions
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
-                iconText: "󰅖"
-                tooltipText: "Remove  x"
-                foreground: root.dim
-                hoverColor: root.urgent
-                fontFamily: root.fontFamily
-                onClicked: root.removePlace(placeCard.place.key)
+                spacing: Style.space(2)
+
+                readonly property bool onBar: !!placeCard.place && placeCard.place.onBar
+                readonly property bool barFull: root.service.barPlaces.length >= Model.MAX_BAR_PLACES
+
+                PanelActionButton {
+                  id: barButton
+                  visible: !!placeCard.place && (placeCard.hot || cardActions.onBar)
+                  iconText: cardActions.onBar ? "󰐃" : "󰤱"
+                  tooltipText: cardActions.onBar ? "Take off the bar  b"
+                    : cardActions.barFull ? "Three on the bar is the most" : "Show on the bar  b"
+                  foreground: cardActions.onBar ? root.accent : root.dim
+                  hoverColor: root.accent
+                  fontFamily: root.fontFamily
+                  onClicked: root.togglePlaceOnBar(placeCard.place.key)
+                }
+
+                PanelActionButton {
+                  id: removeButton
+                  visible: !!placeCard.place && placeCard.hot
+                  iconText: "󰅖"
+                  tooltipText: "Remove  x"
+                  foreground: root.dim
+                  hoverColor: root.urgent
+                  fontFamily: root.fontFamily
+                  onClicked: root.removePlace(placeCard.place.key)
+                }
               }
             }
           }
@@ -1236,7 +1269,7 @@ Panel {
 
           Text {
             Layout.fillWidth: true
-            text: "↑ ↓ choose   ·   Return open   ·   a add   ·   x remove   ·   [ ] step through places from the forecast"
+            text: "↑ ↓ choose   ·   Return open   ·   b bar   ·   a add   ·   x remove   ·   [ ] step through places"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

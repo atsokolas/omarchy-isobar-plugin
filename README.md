@@ -42,13 +42,15 @@ In the panel, press `/` or click the place name, then search for a city. "Use my
 
 ## Places
 
-Press `p` (or click the globe) for Places, then `a` to add a city. Places are stored in the widget's `shell.json` entry, so they move with the rest of your config. The bar always shows home.
+Press `p` (or click the globe) for Places, then `a` to add a city. Places are stored in the widget's `shell.json` entry, so they move with the rest of your config.
+
+To keep one in view, press `b` on its row (or click the pin). It joins the bar after home, as its name, its sky and its temperature, and clicking it opens straight to that place's forecast. Three fit on the bar; vertical bars keep to home.
 
 ```json
 {
   "id": "atsokolas.isobar",
   "places": [
-    { "name": "Tokyo", "description": "Tokyo, Japan", "latitude": 35.6895, "longitude": 139.6917 }
+    { "name": "Tokyo", "description": "Tokyo, Japan", "latitude": 35.6895, "longitude": 139.6917, "onBar": true }
   ]
 }
 ```
@@ -70,9 +72,9 @@ Press `p` (or click the globe) for Places, then `a` to add a city. Places are st
 | `r` | Refresh |
 | `s` | Settings |
 
-On the Places page: `↑` `↓` choose, `Return` opens, `a` adds, `x` removes.
+On the Places page: `↑` `↓` choose, `Return` opens, `b` puts it on the bar or takes it off, `a` adds, `x` removes.
 
-On the bar: left click opens the panel, middle click refreshes, and right click copies the forecast.
+On the bar: left click opens the panel, middle click refreshes, and right click copies the forecast. A place on the bar opens to its own forecast.
 
 ## Settings
 

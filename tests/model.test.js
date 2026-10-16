@@ -337,6 +337,32 @@ test("adding and removing places", () => {
   assert.ok(!list.some(p => p.name === "Lisbon"))
 })
 
+test("a few places can sit on the bar beside home", () => {
+  let list = []
+  for (let i = 0; i < 5; i++) list = Model.addPlace(list, { name: "P" + i, latitude: i, longitude: i })
+  assert.ok(!("onBar" in list[0]), "shell.json only says onBar when it's true")
+  const key = i => Model.placeKey({ latitude: i, longitude: i })
+  list = Model.togglePlaceOnBar(list, key(1))
+  assert.equal(list[1].onBar, true)
+  assert.deepEqual(Model.barPlaces(list).map(p => p.name), ["P1"])
+  list = Model.togglePlaceOnBar(list, key(3))
+  list = Model.togglePlaceOnBar(list, key(0))
+  assert.equal(Model.barPlaces(list).length, Model.MAX_BAR_PLACES)
+  assert.deepEqual(Model.barPlaces(list).map(p => p.name), ["P0", "P1", "P3"], "the bar keeps the order of the list")
+  assert.equal(Model.barPlaces(Model.togglePlaceOnBar(list, key(4))).length, Model.MAX_BAR_PLACES, "a full bar refuses")
+  list = Model.togglePlaceOnBar(list, key(1))
+  assert.deepEqual(Model.barPlaces(list).map(p => p.name), ["P0", "P3"])
+  assert.equal(Model.togglePlaceOnBar(list, "nowhere").length, 5)
+  assert.ok(Model.removePlace(list, key(0)).every(p => p.name !== "P0"))
+})
+
+test("the bar names a place briefly", () => {
+  assert.equal(Model.barName("Tokyo"), "Tokyo")
+  assert.equal(Model.barName("Paris, Île-de-France"), "Paris")
+  assert.equal(Model.barName("Llanfairpwllgwyngyll"), "Llanfairpwl…")
+  assert.equal(Model.barName(""), "")
+})
+
 test("the time difference reads the way people say it", () => {
   assert.equal(Model.offsetText(32400, -18000), "14 hours ahead")
   assert.equal(Model.offsetText(19800, 0), "5½ hours ahead")

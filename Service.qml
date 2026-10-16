@@ -97,6 +97,8 @@ Item {
   // Other cities, kept in the widget's shell.json entry. Each gets the same
   // full forecast as home, fetched one at a time behind it and cached.
   readonly property var places: Model.normalizePlaces(setting("places", []))
+  // The ones you asked to see on the bar, after home.
+  readonly property var barPlaces: places.filter(function(p) { return p.onBar })
   property var placeForecasts: ({})
   property var _placeQueue: []
   readonly property string placesCachePath: cacheDir + "/places.json"

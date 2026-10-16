@@ -992,6 +992,8 @@ function rainKey(outlook) {
 // Places: other cities kept beside home.
 
 var MAX_PLACES = 8
+// The bar has room for a few; the rest stay in the panel.
+var MAX_BAR_PLACES = 3
 
 function placeKey(p) {
   if (!hasCoordinates(p)) return ""
@@ -1008,14 +1010,37 @@ function normalizePlaces(list) {
     var key = placeKey(p)
     if (seen[key]) continue
     seen[key] = true
-    out.push({ name: trim(p.name), description: trim(p.description), latitude: num(p.latitude), longitude: num(p.longitude), key: key })
+    out.push({ name: trim(p.name), description: trim(p.description), latitude: num(p.latitude), longitude: num(p.longitude), onBar: p.onBar === true, key: key })
   }
   return out
 }
 
 // A place as it is stored in shell.json — no derived fields.
 function storedPlace(p) {
-  return { name: trim(p.name), description: trim(p.description), latitude: Math.round(num(p.latitude) * 10000) / 10000, longitude: Math.round(num(p.longitude) * 10000) / 10000 }
+  var out = { name: trim(p.name), description: trim(p.description), latitude: Math.round(num(p.latitude) * 10000) / 10000, longitude: Math.round(num(p.longitude) * 10000) / 10000 }
+  if (p.onBar === true) out.onBar = true
+  return out
+}
+
+function barPlaces(list) {
+  return normalizePlaces(list).filter(function(q) { return q.onBar })
+}
+
+// Puts a place on the bar or takes it off. A full bar refuses rather than
+// bumping a place you put there.
+function togglePlaceOnBar(list, key) {
+  var places = normalizePlaces(list)
+  var target = places.filter(function(q) { return q.key === key })[0]
+  if (!target) return places.map(storedPlace)
+  if (!target.onBar && barPlaces(places).length >= MAX_BAR_PLACES) return places.map(storedPlace)
+  target.onBar = !target.onBar
+  return places.map(storedPlace)
+}
+
+// The name as the bar shows it: the city, not the region, and never long.
+function barName(name) {
+  var n = trim(String(name || "").split(",")[0])
+  return n.length > 12 ? trim(n.slice(0, 11)) + "…" : n
 }
 
 function addPlace(list, p) {
@@ -1064,7 +1089,8 @@ function compareLine(there, here, imperial, homeName) {
 
 if (typeof module !== "undefined") {
   module.exports = {
-    APP_NAME: APP_NAME, HOUR_MS: HOUR_MS, DAY_MS: DAY_MS,
+    APP_NAME: APP_NAME, HOUR_MS: HOUR_MS, DAY_MS: DAY_MS, MAX_BAR_PLACES: MAX_BAR_PLACES,
+    barPlaces: barPlaces, togglePlaceOnBar: togglePlaceOnBar, barName: barName,
     clamp: clamp, num: num, trim: trim, boolSetting: boolSetting, intSetting: intSetting,
     parseLocationFile: parseLocationFile, hasCoordinates: hasCoordinates, sameLocation: sameLocation,
     parseIpInfo: parseIpInfo, parseGeocodingResults: parseGeocodingResults,
