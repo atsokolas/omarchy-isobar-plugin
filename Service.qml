@@ -31,6 +31,7 @@ Item {
   readonly property bool showHint: Model.boolSetting(setting("showHint", true), true)
   readonly property bool notify: Model.boolSetting(setting("notify", false), false)
   readonly property bool animate: Model.boolSetting(setting("animate", true), true)
+  readonly property bool openHours: Model.boolSetting(setting("openHours", false), false)
   readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", 15), 15, 5, 180)
 
   // Qt spells AM/PM as "a" or "AP" depending on version; either means 12h.

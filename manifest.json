@@ -32,7 +32,8 @@
       "showHint": true,
       "notify": false,
       "animate": true,
-      "refreshMinutes": 15
+      "refreshMinutes": 15,
+      "openHours": false
     },
     "schema": [
       {
@@ -60,6 +61,13 @@
         "label": "Heads-up before rain",
         "defaultValue": false,
         "description": "A quiet toast half an hour before rain or snow arrives."
+      },
+      {
+        "key": "openHours",
+        "type": "boolean",
+        "label": "Open hour by hour",
+        "defaultValue": false,
+        "description": "The panel opens on the hours, which scroll and settle one at a time, rather than the overview."
       },
       {
         "key": "animate",

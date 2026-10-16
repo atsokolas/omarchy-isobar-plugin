@@ -21,7 +21,8 @@ var CURRENT_FIELDS = [
 ]
 var HOURLY_FIELDS = [
   "temperature_2m", "apparent_temperature", "precipitation_probability", "precipitation",
-  "weather_code", "is_day", "pressure_msl", "wind_speed_10m", "uv_index"
+  "weather_code", "is_day", "pressure_msl", "wind_speed_10m", "uv_index",
+  "relative_humidity_2m", "wind_direction_10m", "wind_gusts_10m"
 ]
 var DAILY_FIELDS = [
   "weather_code", "temperature_2m_max", "temperature_2m_min", "sunrise", "sunset",
@@ -398,7 +399,10 @@ function parseForecast(raw, fetchedAt) {
       isDay: Number(column(h, "is_day", i)) !== 0,
       pressure: num(column(h, "pressure_msl", i)),
       wind: num(column(h, "wind_speed_10m", i)),
-      uv: num(column(h, "uv_index", i))
+      uv: num(column(h, "uv_index", i)),
+      humidity: num(column(h, "relative_humidity_2m", i)),
+      windDir: num(column(h, "wind_direction_10m", i)),
+      gusts: num(column(h, "wind_gusts_10m", i))
     })
   }
 
@@ -482,6 +486,79 @@ function upcomingHours(fc, lms, count) {
 function hoursOfDay(fc, key) {
   if (!fc) return []
   return fc.hourly.filter(function(h) { return dateKey(h.t) === key })
+}
+
+// ---------------------------------------------------------------------------
+// Hour by hour: every hour from this one to the end of the forecast, each
+// knowing whether it is now and whether a new day starts with it.
+
+function hourStrip(fc, lms) {
+  var start = hourIndex(fc, lms)
+  if (start < 0) return []
+  var out = []
+  var lastKey = dateKey(lms)
+  for (var i = start; i < fc.hourly.length; i++) {
+    var h = fc.hourly[i]
+    var key = dateKey(h.t)
+    var entry = {}
+    for (var k in h) entry[k] = h[k]
+    entry.now = i === start
+    entry.dayStart = key !== lastKey
+    entry.day = dayLabel(h.t, lms)
+    lastKey = key
+    out.push(entry)
+  }
+  return out
+}
+
+// "Today", "Tomorrow", then the weekday.
+function dayLabel(t, lms) {
+  var days = Math.round((localMs(dateKey(t)) - localMs(dateKey(lms))) / DAY_MS)
+  if (days === 0) return "Today"
+  if (days === 1) return "Tomorrow"
+  return weekday(t)
+}
+
+// When an hour is, the way you'd say it: "Now", "4 pm", "6 am tomorrow",
+// "noon Saturday".
+function hourWhen(h, lms, use24) {
+  if (!h) return ""
+  if (h.now) return "Now"
+  var day = dayLabel(h.t, lms)
+  var at = spokenHour(h.t, use24)
+  return day === "Today" ? at : at + " " + (day === "Tomorrow" ? "tomorrow" : day)
+}
+
+// The readings under the strip for one hour, leaving out what the forecast
+// doesn't carry.
+function hourDetails(h, imperial) {
+  if (!h) return []
+  var out = []
+  if (!isNaN(num(h.feels))) out.push({ label: "Feels like", value: tempText(h.feels, imperial) })
+  var pop = num(h.pop), mm = num(h.precip)
+  if (!isNaN(pop)) out.push({ label: "Rain", value: Math.round(pop) + "%" + (mm > 0 ? "  ·  " + precipText(mm, imperial) : "") })
+  if (!isNaN(num(h.wind))) {
+    var w = speedText(h.wind, imperial)
+    var dir = compass(h.windDir)
+    var gust = num(h.gusts)
+    out.push({ label: "Wind", value: w + (dir ? " " + dir : "") + (!isNaN(gust) && gust - num(h.wind) >= 10 ? ", gusts " + speed(gust, imperial) : "") })
+  }
+  if (!isNaN(num(h.humidity))) out.push({ label: "Humidity", value: Math.round(num(h.humidity)) + "%" })
+  if (!isNaN(num(h.uv)) && h.isDay) out.push({ label: "UV", value: uvLabel(h.uv) + "  " + Math.round(num(h.uv)) })
+  return out
+}
+
+// A soft detent: free scrolling slows as it nears an hour and hurries
+// between them, so the strip feels drawn to each one.
+function detent(raw, strength) {
+  var k = clamp(num(strength) || 0, 0, 0.95)
+  return raw - k * Math.sin(2 * Math.PI * raw) / (2 * Math.PI)
+}
+
+// Where a flick comes to rest: the nearest hour after a short glide.
+function restIndex(position, velocity, count) {
+  if (!(count > 0)) return 0
+  return clamp(Math.round(num(position) + (num(velocity) || 0) * 0.18), 0, count - 1)
 }
 
 // Today and the six days after — yesterday is fetched only to compare with.
@@ -1110,7 +1187,9 @@ if (typeof module !== "undefined") {
     sunProgress: sunProgress, moonPhase: moonPhase, moonIllumination: moonIllumination, moonName: moonName,
     moonPolygon: moonPolygon, upperIntersection: upperIntersection, cloudArcs: cloudArcs,
     monotoneSegments: monotoneSegments, niceRange: niceRange, rangeSpan: rangeSpan, weekRange: weekRange,
-    parseColors: parseColors, mix: mix, tempColor: tempColor,
+    parseColors: parseColors,
+    hourStrip: hourStrip, dayLabel: dayLabel, hourWhen: hourWhen, hourDetails: hourDetails,
+    detent: detent, restIndex: restIndex, mix: mix, tempColor: tempColor,
     tooltipText: tooltipText, copyPayload: copyPayload, copyCommand: copyCommand, radarCommand: radarCommand,
     toastCommand: toastCommand, saveLocationCommand: saveLocationCommand, rainKey: rainKey,
     MAX_PLACES: MAX_PLACES, placeKey: placeKey, normalizePlaces: normalizePlaces, storedPlace: storedPlace,

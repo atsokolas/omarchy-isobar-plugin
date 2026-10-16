@@ -15,7 +15,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property bool openedFromHotkey: false
-  // main | settings | place
+  // main | hours | places | settings | place
   property string page: "main"
   // 0 is "the next 24 hours, from now"; 1–6 are the days after today.
   property int dayIndex: 0
@@ -172,7 +172,9 @@ Panel {
     viewKey = key || ""
     dayIndex = 0
     chart.clearSelection()
-    page = "main"
+    // Stepping places from hour by hour stays on the hours.
+    page = page === "hours" ? "hours" : "main"
+    hourView.toNow()
     revealAnim.restart()
     chart.drawIn()
     sunArc.drawIn()
@@ -222,13 +224,25 @@ Panel {
   }
 
   function handleClose() {
-    if (page !== "main") showPage("main")
+    if (page === "hours" && service.openHours) close()
+    else if (page !== "main") showPage("main")
     else close()
+  }
+
+  function toggleHours() {
+    if (page === "hours") { showPage("main"); return }
+    hourView.toNow()
+    showPage("hours")
   }
 
   function handleMove(dx, dy) {
     if (page === "places") {
       if (dy !== 0) placeCursor = Math.max(0, Math.min(service.places.length + 1, placeCursor + dy))
+      return
+    }
+    if (page === "hours") {
+      if (dx !== 0) hourView.step(dx)
+      else if (dy !== 0) hourView.step(dy * 24)
       return
     }
     if (page !== "main") return
@@ -238,9 +252,10 @@ Panel {
 
   onOpenedChanged: {
     if (!opened) return
-    page = "main"
+    page = service.openHours ? "hours" : "main"
     dayIndex = 0
     viewKey = ""
+    hourView.toNow()
     service.fetchPlaces(false)
     chart.clearSelection()
     revealAnim.restart()
@@ -391,6 +406,7 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(500))
     contentHeight: panel.fittedContentHeight(
       root.page === "main" ? mainPage.implicitHeight
+        : root.page === "hours" ? hoursPage.implicitHeight
         : root.page === "settings" ? settingsPage.implicitHeight
         : root.page === "places" ? placesPage.implicitHeight
         : placePage.implicitHeight)
@@ -424,6 +440,8 @@ Panel {
         else if (key === "g") root.showPlace("")
         else if (key === "c") root.service.copySummary(root.viewPlace)
         else if (key === "o") root.service.openRadar(root.viewPlace)
+        else if (key === "h") root.toggleHours()
+        else if (key === "t" && root.page === "hours") hourView.toNow()
         else if (key === "t") { root.selectDay(0); chart.clearSelection() }
         else if (key >= "1" && key <= "7") root.selectDay(parseInt(key, 10) - 1)
       }
@@ -518,6 +536,13 @@ Panel {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.showPlace("")
+              }
+              PanelActionButton {
+                iconText: "󰥔"
+                tooltipText: "Hour by hour  h"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.toggleHours()
               }
               PanelActionButton {
                 iconText: "󰇧"
@@ -1005,12 +1030,108 @@ Panel {
             }
             Text {
               anchors.right: parent.right
-              text: root.service.places.length > 0 ? "← → hours   ↑ ↓ days   [ ] places   p list" : "← → hours   ↑ ↓ days   p places"
+              text: root.service.places.length > 0 ? "← → hours   ↑ ↓ days   h hour by hour   [ ] places" : "← → hours   ↑ ↓ days   h hour by hour   p places"
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
           }
+        }
+      }
+
+      // ==== Hour by hour ===================================================
+      // The forecast an hour at a time, for home or whichever place is up.
+      ColumnLayout {
+        id: hoursPage
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        visible: root.page === "hours"
+        spacing: Style.space(12)
+        opacity: root.reveal
+
+        Item {
+          Layout.fillWidth: true
+          implicitHeight: Math.max(hoursTitle.implicitHeight, hoursButtons.height)
+          Column {
+            id: hoursTitle
+            anchors.left: parent.left
+            anchors.right: hoursButtons.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+            Text {
+              width: parent.width
+              text: root.viewName || "Hour by hour"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+            }
+            Text {
+              width: parent.width
+              text: "Hour by hour" + (root.away && root.service.forecast && root.fc ? "  ·  " + Model.offsetText(root.fc.offset, root.service.forecast.offset) : "")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+          Row {
+            id: hoursButtons
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+            PanelActionButton {
+              visible: root.away
+              iconText: "󰋜"
+              tooltipText: "Back home  g"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.showPlace("")
+            }
+            PanelActionButton {
+              iconText: "󰁍"
+              tooltipText: "The overview  h"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.showPage("main")
+            }
+          }
+        }
+
+        PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
+
+        HourByHour {
+          id: hourView
+          Layout.fillWidth: true
+          Layout.preferredHeight: implicitHeight
+          hours: Model.hourStrip(root.fc, root.lms)
+          lms: root.lms
+          imperial: root.imperial
+          use24: root.use24
+          palette: root.palette
+          foreground: root.foreground
+          dim: root.dim
+          accent: root.accent
+          surface: root.surface
+          sunTint: root.sunTint
+          wetTint: root.wetTint
+          boltTint: root.boltTint
+          fontFamily: root.fontFamily
+          moonPhase: root.service.moonPhase
+          animate: root.service.animate
+          live: root.opened && root.page === "hours"
+        }
+
+        PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
+
+        Text {
+          Layout.fillWidth: true
+          text: "scroll or ← →  an hour   ·   ↑ ↓  a day   ·   t  now" + (root.service.places.length > 0 ? "   ·   [ ]  places" : "") + "   ·   h  overview"
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
         }
       }
 
@@ -1377,6 +1498,20 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
+          title: "Open hour by hour"
+          meta: "The panel opens on the hours rather than the overview"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          trailingControl: Component {
+            ToggleSwitch {
+              checked: root.service.openHours
+              onToggled: root.persistSettings({ openHours: !root.service.openHours })
+            }
+          }
+        }
+
+        PanelHero {
+          Layout.fillWidth: true
           title: "Moving sky"
           meta: "Rays turn and rain falls while you're looking"
           foreground: root.foreground
@@ -1393,7 +1528,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "← →  read the hours   ·   ↑ ↓  or 1–7  pick a day   ·   t  back to now\n/  location   ·   u  units   ·   o  radar   ·   c  copy   ·   r  refresh"
+          text: "← →  read the hours   ·   ↑ ↓  or 1–7  pick a day   ·   t  back to now\nh  hour by hour   ·   /  location   ·   u  units   ·   o  radar   ·   c  copy   ·   r  refresh"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

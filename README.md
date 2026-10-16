@@ -13,6 +13,7 @@ A small sky on the bar beside the temperature. When rain is on its way, the bar 
 - **A forecast in a sentence.** "Drizzle until about 8 pm. 3° cooler than yesterday." It says how long the current sky lasts and what comes after, compares today with yesterday, and mentions gusts or a high UV index when they matter.
 - **The next two hours.** When something is falling, a strip of fifteen-minute bars shows how hard and for how long.
 - **Twenty-four hours as one line.** A smooth curve that passes through every hour and never invents a peak between them. It's coloured along its length by temperature, with night as a faint band behind it, sunrise and sunset as dotted hairlines, and the chance of rain as bars beneath. Hover over it, or use `←` `→`, to read any hour.
+- **Hour by hour.** Press `h` (or the clock) for the forecast an hour at a time, for home or whichever place is open. Scroll, drag or use `←` `→` and the hours glide under a fixed lens. Free scrolling lingers at each hour, and when you let go the strip springs onto the nearest one, a touch past and back. The hour in the lens is read out large above, with its feels-like, rain, wind and humidity below. Midnight is marked where it falls, and a thin track shows where you are in the week. `↑` `↓` move a day at a time.
 - **The week as thermometers.** Each day's low and high sit on the week's shared scale, so a cold snap looks like one. Today's bar shows where the temperature is right now. Pick a day (`↑` `↓`, `1`–`7`, or a click) to put its hours on the chart.
 - **The small facts.** A wind compass that points where the wind is going, humidity with the dew point, UV, air quality (or the pressure trend), and the sun's arc across today. It also shows how much daylight you gained or lost since yesterday, which tells you which way the year is turning.
 - **In your theme.** Every colour comes from the current Omarchy theme's `colors.toml`: a yellow sun, blue rain, and a thermometer that runs from the theme's magenta through blue, cyan and green to its red. Change the theme and the panel changes with it.
@@ -62,6 +63,7 @@ To keep one in view, press `b` on its row (or click the pin). It joins the bar a
 | `←` `→` | Read the hours on the chart |
 | `↑` `↓`, `1`–`7` | Pick a day |
 | `t` | Back to now |
+| `h` | Hour by hour, and back |
 | `p` | Places |
 | `[` `]` | Previous / next place |
 | `g` | Back home |
@@ -71,6 +73,8 @@ To keep one in view, press `b` on its row (or click the pin). It joins the bar a
 | `c` | Copy the forecast |
 | `r` | Refresh |
 | `s` | Settings |
+
+On the hour-by-hour page: scroll, drag or `←` `→` an hour, `↑` `↓` a day, `t` now. Click an hour or a spot on the week's track to go there.
 
 On the Places page: `↑` `↓` choose, `Return` opens, `b` puts it on the bar or takes it off, `a` adds, `x` removes.
 
@@ -85,6 +89,7 @@ Change these on the widget's `shell.json` entry or on the panel's settings page.
 | `unit` | `auto` | `auto` follows your locale (°F and mph in the US), or set `metric` or `imperial` |
 | `showHint` | `true` | "Rain in 20m" beside the temperature, only when it's coming |
 | `notify` | `false` | A quiet toast about half an hour before rain or snow |
+| `openHours` | `false` | Open the panel on hour by hour rather than the overview |
 | `animate` | `true` | The moving sky on hover and in the panel |
 | `refreshMinutes` | `15` | How often to fetch, 5–180 |
 | `places` | `[]` | Other cities to keep an eye on, up to eight |
