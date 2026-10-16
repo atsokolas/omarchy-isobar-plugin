@@ -20,6 +20,9 @@ Item {
   readonly property string cachePath: cacheDir + "/forecast.json"
   readonly property string locationPath: home + "/.local/state/omarchy/settings/weather.json"
   readonly property string colorsPath: home + "/.local/state/omarchy/current/theme/colors.toml"
+  readonly property string stateDir: home + "/.local/state/omarchy/isobar"
+  readonly property string statePath: stateDir + "/state.json"
+  readonly property string alertsCachePath: cacheDir + "/alerts.json"
 
   // ---- Settings ------------------------------------------------------------
   function setting(name, fallback) {
@@ -32,6 +35,9 @@ Item {
   readonly property bool notify: Model.boolSetting(setting("notify", false), false)
   readonly property bool animate: Model.boolSetting(setting("animate", true), true)
   readonly property bool openHours: Model.boolSetting(setting("openHours", false), false)
+  readonly property bool alertsOn: Model.boolSetting(setting("alerts", true), true)
+  readonly property bool firsts: Model.boolSetting(setting("firsts", true), true)
+  readonly property bool notes: Model.boolSetting(setting("notes", true), true)
   readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", 15), 15, 5, 180)
 
   // Qt spells AM/PM as "a" or "AP" depending on version; either means 12h.
@@ -66,6 +72,7 @@ Item {
   readonly property WeatherView homeView: WeatherView {
     forecast: root.forecast
     air: root.air
+    alerts: root.alertsFor("")
     imperial: root.imperial
     use24: root.use24
     nowMs: root.nowMs
@@ -81,6 +88,9 @@ Item {
   readonly property string kind: homeView.kind
   readonly property bool night: homeView.night
   readonly property int strength: homeView.strength
+  readonly property var homeAlerts: homeView.activeAlerts
+  readonly property real golden: homeView.golden
+  readonly property string fullMoon: homeView.fullMoon
   readonly property real moonPhase: Model.moonPhase(nowMs)
 
   readonly property string tempLabel: current ? Model.tempText(current.temp, imperial) : ""
@@ -148,6 +158,8 @@ Item {
       placeForecasts = next
       _placeRaw[key] = { fetchedAt: parsed.fetchedAt, raw: raw }
       writePlacesCache()
+      fetchAlerts(key)
+      checkPlaceNote(key)
     }
     Qt.callLater(pumpPlaces)
   }
@@ -235,6 +247,8 @@ Item {
     nowMs = Date.now()
     cacheFile.setText(JSON.stringify({ version: 1, key: locationKey, place: placeName, fetchedAt: parsed.fetchedAt, raw: raw }) + "\n")
     maybeAnnounce()
+    fetchAlerts("")
+    checkFirsts()
   }
 
   function fail(message) {
@@ -298,6 +312,123 @@ Item {
       placeName ? placeName + " · " + Model.tempText(current.temp, imperial) : ""))
   }
 
+  // ---- Alerts --------------------------------------------------------------
+  // NWS alerts by place key ("" is home), each { fetchedAt, alerts }.
+  property var alertsByKey: ({})
+  property var _alertQueue: []
+
+  function alertsFor(key) {
+    var e = alertsByKey[key || ""]
+    return e ? e.alerts : []
+  }
+
+  function coordsFor(key) {
+    if (!key) return location
+    return placeFor(key)
+  }
+
+  function fetchAlerts(key) {
+    if (!alertsOn) return
+    var where = coordsFor(key)
+    if (!where || !Model.nwsCovers(where.latitude, where.longitude)) return
+    var have = alertsByKey[key || ""]
+    if (have && Date.now() - have.fetchedAt < 5 * 60000) return
+    if (_alertQueue.indexOf(key || "") < 0) _alertQueue = _alertQueue.concat([key || ""])
+    pumpAlerts()
+  }
+
+  function pumpAlerts() {
+    if (!active || alertProcess.running || _alertQueue.length === 0) return
+    var key = _alertQueue[0]
+    _alertQueue = _alertQueue.slice(1)
+    var where = coordsFor(key)
+    if (!where) { Qt.callLater(pumpAlerts); return }
+    alertProcess.key = key
+    alertProcess.out = ""
+    alertProcess.command = Model.alertsCommand(where.latitude, where.longitude)
+    alertProcess.running = true
+  }
+
+  function applyAlerts(key, raw, ok) {
+    var list = ok ? Model.parseAlerts(raw, Date.now()) : null
+    if (list) {
+      var next = {}
+      for (var k in alertsByKey) next[k] = alertsByKey[k]
+      next[key] = { fetchedAt: Date.now(), alerts: list }
+      alertsByKey = next
+      alertsCache.setText(JSON.stringify({ version: 1, entries: next }) + "\n")
+      if (key === "") announceAlerts(list)
+      else checkPlaceNote(key)
+    }
+    Qt.callLater(pumpAlerts)
+  }
+
+  function loadAlertsCache(text) {
+    try {
+      var data = JSON.parse(String(text || ""))
+      if (!data || data.version !== 1 || !data.entries) return
+      var next = {}
+      for (var k in data.entries) next[k] = alertsByKey[k] || data.entries[k]
+      alertsByKey = next
+    } catch (e) {}
+  }
+
+  // ---- Remembered: firsts seen, notes and alerts already mentioned --------
+  property var memory: Model.pruneState(null, 0)
+  property bool memoryLoaded: false
+
+  function remember(next) {
+    memory = Model.pruneState(next, Date.now())
+    stateFile.setText(JSON.stringify(memory) + "\n")
+  }
+
+  function announceAlerts(list) {
+    if (!memoryLoaded || !alertsOn) return
+    var next = { seen: memory.seen, notes: memory.notes, alerts: {} }
+    for (var k in memory.alerts) next.alerts[k] = memory.alerts[k]
+    var fresh = Model.activeAlerts(list, Date.now()).filter(function(a) { return !next.alerts[a.id] })
+    if (fresh.length === 0) return
+    for (var i = 0; i < fresh.length; i++) {
+      var a = fresh[i]
+      next.alerts[a.id] = Date.now()
+      var urgent = a.severity === "Extreme" || a.severity === "Severe"
+      Quickshell.execDetached(Model.toastCommand(a.event, a.headline || placeName, urgent ? "critical" : "normal"))
+    }
+    remember(next)
+  }
+
+  function checkFirsts() {
+    if (!memoryLoaded || !forecast) return
+    var out = Model.seasonFirsts(forecast, localNow, memory, imperial, placeName, use24)
+    remember({ seen: out.seen, notes: memory.notes, alerts: memory.alerts })
+    if (!firsts) return
+    for (var i = 0; i < out.events.length; i++)
+      Quickshell.execDetached(Model.toastCommand(out.events[i].title, out.events[i].body))
+  }
+
+  // What's notable at a saved place right now, for the Places page.
+  function noteFor(key) {
+    var p = placeFor(key)
+    var fc = placeForecasts[key]
+    if (!p || !fc) return null
+    return Model.placeNote(fc, Model.nowLocal(nowMs, fc.offset), imperial, p.name, alertsFor(key), nowMs)
+  }
+
+  function checkPlaceNote(key) {
+    if (!memoryLoaded || !notes) return
+    var fc = placeForecasts[key]
+    var note = noteFor(key)
+    if (!note || !fc) return
+    var id = Model.noteKey(key, note, Model.nowLocal(nowMs, fc.offset))
+    if (memory.notes[id]) return
+    var next = { seen: memory.seen, notes: {}, alerts: memory.alerts }
+    for (var k in memory.notes) next.notes[k] = memory.notes[k]
+    next.notes[id] = Date.now()
+    remember(next)
+    var cur = fc.current
+    Quickshell.execDetached(Model.toastCommand(note.text, cur ? Model.tempText(cur.temp, imperial) + " · " + Model.conditionLabel(cur.code, cur.isDay) : ""))
+  }
+
   function openRadar(place) {
     var where = place || location
     var cmd = where ? Model.radarCommand(where.latitude, where.longitude) : null
@@ -312,7 +443,7 @@ Item {
   }
 
   Component.onCompleted: {
-    Quickshell.execDetached(["mkdir", "-p", cacheDir])
+    Quickshell.execDetached(["mkdir", "-p", cacheDir, stateDir])
   }
 
   // ---- Plumbing ------------------------------------------------------------
@@ -426,6 +557,37 @@ Item {
   Process {
     id: saveLocationProcess
     onExited: locationFile.reload()
+  }
+
+  Process {
+    id: alertProcess
+    property string key: ""
+    property string out: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: alertProcess.out = text
+    }
+    onExited: function(code) { root.applyAlerts(alertProcess.key, alertProcess.out, code === 0) }
+  }
+
+  FileView {
+    id: alertsCache
+    path: root.alertsCachePath
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadAlertsCache(text())
+  }
+
+  FileView {
+    id: stateFile
+    path: root.statePath
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.memory = Model.parseState(text())
+      root.memoryLoaded = true
+    }
+    onLoadFailed: root.memoryLoaded = true
   }
 
   Timer {

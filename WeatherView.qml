@@ -9,6 +9,8 @@ QtObject {
   property bool imperial: false
   property bool use24: false
   property real nowMs: Date.now()
+  // Live NWS alerts for this place; empty outside the US.
+  property var alerts: []
 
   readonly property real localNow: forecast ? Model.nowLocal(nowMs, forecast.offset) : nowMs
   readonly property var current: forecast ? forecast.current : null
@@ -22,4 +24,12 @@ QtObject {
   readonly property string kind: current ? Model.iconKind(current.code) : "cloudy"
   readonly property bool night: current ? !current.isDay : false
   readonly property int strength: current ? Model.condition(current.code).strength : 1
+
+  readonly property var activeAlerts: Model.activeAlerts(alerts, nowMs)
+  readonly property var nowcast: Model.nowcast(forecast, localNow, use24, outlook.noun)
+  readonly property string wear: Model.wearNow(forecast, localNow)
+  readonly property string comfort: current ? Model.comfortWord(current.dew, current.temp) : ""
+  readonly property real golden: Model.goldenGlow(forecast, localNow)
+  // On the night of a full moon, its old name.
+  readonly property string fullMoon: Model.fullMoonTonight(nowMs)
 }

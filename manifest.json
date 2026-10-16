@@ -33,7 +33,10 @@
       "notify": false,
       "animate": true,
       "refreshMinutes": 15,
-      "openHours": false
+      "openHours": false,
+      "alerts": true,
+      "firsts": true,
+      "notes": true
     },
     "schema": [
       {
@@ -68,6 +71,27 @@
         "label": "Open hour by hour",
         "defaultValue": false,
         "description": "The panel opens on the hours, which scroll and settle one at a time, rather than the overview."
+      },
+      {
+        "key": "alerts",
+        "type": "boolean",
+        "label": "Weather alerts",
+        "defaultValue": true,
+        "description": "Warnings and advisories from the US National Weather Service: a red band in the panel, a mark on the bar, and a toast once per alert. Outside the US there is no free feed, so nothing shows."
+      },
+      {
+        "key": "firsts",
+        "type": "boolean",
+        "label": "Firsts of the season",
+        "defaultValue": true,
+        "description": "A quiet toast for the first frost, the first snow, the first warm day in months — a few times a year."
+      },
+      {
+        "key": "notes",
+        "type": "boolean",
+        "label": "Notes from your places",
+        "defaultValue": true,
+        "description": "A toast when it snows, storms, or gets truly hot or cold somewhere you keep an eye on. Routine rain isn't news."
       },
       {
         "key": "animate",

@@ -140,7 +140,7 @@ test("the fifteen-minute nowcast beats the hourly forecast", () => {
   assert.equal(out.state, "soon")
   assert.equal(out.minutes, 25)
   assert.equal(Model.barHint(out, false), "Rain in 25m")
-  assert.equal(Model.firstSentence(fc, AT_2PM, false), "Rain starting in about 25 minutes.")
+  assert.equal(Model.firstSentence(fc, AT_2PM, false), "Rain starts in about 25 minutes, lasting past 3:00 pm.")
 })
 
 test("rain in the next few minutes is 'soon', not a made-up count", () => {
@@ -415,7 +415,7 @@ test("an hour's readings leave out what the forecast doesn't carry", () => {
   assert.deepEqual(rows.map(r => r.label), ["Feels like", "Rain", "Wind", "Humidity", "UV", "Wear"])
   assert.equal(rows[5].value, "A warm coat")
   const muggy = Model.hourDetails({ t: 0, temp: 27, feels: 29, pop: 10, humidity: 60, isDay: true, uv: 7 }, false)
-  assert.equal(muggy.find(r => r.label === "Air").value, "Muggy")
+  assert.equal(muggy.find(r => r.label === "Comfort").value, "Muggy")
   assert.equal(muggy.find(r => r.label === "Wear").value, "Sunglasses")
   assert.equal(rows[1].value, "40%  ·  0.4 mm")
   assert.equal(rows[2].value, "20 km/h NW, gusts 45")

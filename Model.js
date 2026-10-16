@@ -546,7 +546,7 @@ function hourDetails(h, imperial) {
   if (!isNaN(num(h.humidity))) out.push({ label: "Humidity", value: Math.round(num(h.humidity)) + "%" })
   if (!isNaN(num(h.uv)) && h.isDay) out.push({ label: "UV", value: uvLabel(h.uv) + "  " + Math.round(num(h.uv)) })
   var feel = comfortWord(dewPoint(h.temp, h.humidity), h.temp)
-  if (feel) out.push({ label: "Air", value: feel })
+  if (feel) out.push({ label: "Comfort", value: feel })
   var wear = wearHint(h.feels, h.pop, h.uv, 0, h.isDay)
   if (wear) out.push({ label: "Wear", value: wear.replace(/\.$/, "") })
   return out
@@ -676,6 +676,12 @@ function sameSky(a, b) {
 function firstSentence(fc, lms, use24) {
   var outlook = precipOutlook(fc, lms)
   var noun = outlook.noun
+
+  // The fifteen-minute data knows both ends of a spell close at hand.
+  if (outlook.state === "now" || outlook.state === "soon") {
+    var close = nowcast(fc, lms, use24, noun).line
+    if (close) return close
+  }
 
   if (outlook.state === "now") {
     if (isNaN(outlook.endMs)) return capital(noun) + " for the rest of the day."
@@ -1059,8 +1065,8 @@ function radarCommand(lat, lon) {
   return ["xdg-open", "https://www.windy.com/?radar," + la + "," + lo + ",8"]
 }
 
-function toastCommand(title, body) {
-  return ["omarchy-notification-send", "--app-name", APP_NAME, "-u", "low", String(title || APP_NAME), String(body || "")]
+function toastCommand(title, body, urgency) {
+  return ["omarchy-notification-send", "--app-name", APP_NAME, "-u", urgency || "low", String(title || APP_NAME), String(body || "")]
 }
 
 function saveLocationCommand(loc) {
