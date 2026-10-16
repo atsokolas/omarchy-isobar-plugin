@@ -52,6 +52,9 @@ Panel {
   readonly property bool imperial: service.imperial
   readonly property bool use24: service.use24
   readonly property real lms: view.localNow
+  // The hour we're in. Lists of hours follow this rather than the minute, so
+  // they're rebuilt (and the chart repainted) once an hour, not every tick.
+  readonly property real lmsHour: Math.floor(lms / Model.HOUR_MS) * Model.HOUR_MS
   readonly property bool viewLoading: away ? service.fetchingPlace === viewKey : service.loading
   readonly property var palette: service.palette
 
@@ -70,16 +73,8 @@ Panel {
   readonly property var week: view.weekData
   readonly property var range: Model.weekRange(week)
   readonly property var selectedDay: dayIndex > 0 && dayIndex < week.length ? week[dayIndex] : null
-  readonly property var chartHours: selectedDay ? Model.hoursOfDay(fc, selectedDay.date) : Model.upcomingHours(fc, lms, 24)
-  readonly property var sunEvents: {
-    var out = []
-    if (!fc) return out
-    for (var i = 0; i < fc.daily.length; i++) {
-      out.push({ t: fc.daily[i].sunrise, rise: true })
-      out.push({ t: fc.daily[i].sunset, rise: false })
-    }
-    return out
-  }
+  readonly property var chartHours: selectedDay ? Model.hoursOfDay(fc, selectedDay.date) : Model.upcomingHours(fc, lmsHour, 24)
+  readonly property var sunEvents: Model.sunEvents(fc)
 
   // Content settles in on open, the way a page turns rather than repaints.
   property real reveal: 1
@@ -155,7 +150,7 @@ Panel {
       placeSearch.reset()
       Qt.callLater(function() { placeField.forceActiveFocus() })
     } else {
-      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      Qt.callLater(function() { keyFront.forceActiveFocus() })
     }
   }
 
@@ -180,7 +175,7 @@ Panel {
     chart.drawIn()
     sunArc.drawIn()
     hero.play()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { keyFront.forceActiveFocus() })
     if (viewKey !== "") {
       var have = service.placeForecasts[viewKey]
       if (!have || Date.now() - have.fetchedAt > 10 * 60000) service.fetchPlace(viewKey)
@@ -289,6 +284,8 @@ Panel {
     property int cursor: 0
     property string pending: ""
     property bool busy: false
+    // The last search couldn't reach the geocoder, as opposed to finding nothing.
+    property bool failed: false
     // "home" sets where you are; "add" keeps another place beside it.
     property string mode: "home"
 
@@ -299,8 +296,10 @@ Panel {
     function reset() {
       results = []
       cursor = 0
+      pending = ""
       placeField.text = ""
       busy = false
+      failed = false
     }
 
     function pick(i) {
@@ -316,13 +315,14 @@ Panel {
 
     function query(text) {
       var q = Model.trim(text)
-      if (q.length < 2) { results = []; cursor = 0; return }
+      if (q.length < 2) { pending = ""; results = []; cursor = 0; failed = false; return }
       pending = q
       if (!geocodeProcess.running) start()
     }
 
     function start() {
       busy = true
+      geocodeProcess.out = ""
       geocodeProcess.asked = pending
       geocodeProcess.command = Model.curl(Model.geocodeQuery(pending), 6)
       geocodeProcess.running = true
@@ -336,8 +336,11 @@ Panel {
     property string asked: ""
     property string out: ""
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: geocodeProcess.out = text }
-    onExited: {
+    onExited: function(code) {
       placeSearch.busy = false
+      // The field was cleared while this was out: its answer is to nothing.
+      if (placeSearch.pending === "") return
+      placeSearch.failed = code !== 0
       placeSearch.results = Model.parseGeocodingResults(out)
       placeSearch.cursor = placeSearch.results.length > 0 ? placeSearch.lead : 0
       if (placeSearch.pending !== asked) Qt.callLater(placeSearch.start)
@@ -403,7 +406,7 @@ Panel {
     bar: root.bar
     open: root.opened
     centerOnBar: true
-    focusTarget: keyCatcher
+    focusTarget: keyFront
     contentWidth: panel.fittedContentWidth(Style.space(500))
     contentHeight: panel.fittedContentHeight(
       root.page === "main" ? mainPage.implicitHeight
@@ -427,6 +430,23 @@ Panel {
       }
       onCloseRequested: root.handleClose()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+
+      // The catcher reads h as "left", vim-style, so it would never reach
+      // onTextKey below. Here h means hour by hour: it's caught in front of
+      // the catcher, and every other key passes through to it.
+      Item {
+        id: keyFront
+        focus: true
+        Keys.onPressed: function(event) {
+          var plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+          if (!keyCatcher.blocked && plain && event.text === "h") {
+            root.toggleHours()
+            event.accepted = true
+          } else {
+            event.accepted = false
+          }
+        }
+      }
       onTextKey: function(text) {
         var key = String(text || "")
         if (key === "r") root.refresh()
@@ -1086,7 +1106,7 @@ Panel {
             Tile {
               label: "HUMIDITY"
               value: root.now && !isNaN(root.now.humidity) ? Math.round(root.now.humidity) + "%" : "—"
-              sub: root.now && !isNaN(root.now.dew) ? (view.comfort ? view.comfort + ", dew " : "Dew point ") + Model.tempText(root.now.dew, root.imperial) : ""
+              sub: root.now && !isNaN(root.now.dew) ? Model.dewLine(view.comfort, Model.tempText(root.now.dew, root.imperial)) : ""
             }
 
             Tile {
@@ -1210,7 +1230,7 @@ Panel {
           id: hourView
           Layout.fillWidth: true
           Layout.preferredHeight: implicitHeight
-          hours: Model.hourStrip(root.fc, root.lms)
+          hours: Model.hourStrip(root.fc, root.lmsHour)
           lms: root.lms
           imperial: root.imperial
           use24: root.use24
@@ -1236,7 +1256,7 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+          wrapMode: Text.WordWrap
         }
       }
 
@@ -1804,7 +1824,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           visible: placeSearch.busy || (Model.trim(placeField.text).length >= 2 && placeSearch.results.length === 0)
-          text: placeSearch.busy ? "Searching…" : "Nowhere by that name"
+          text: placeSearch.busy ? "Searching…" : placeSearch.failed ? "Can't reach the place search — check the network" : "Nowhere by that name"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall

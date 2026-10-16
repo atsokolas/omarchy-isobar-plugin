@@ -37,3 +37,11 @@ test("the icon is throttled rather than repainting every frame", () => {
   assert.doesNotMatch(icon, /NumberAnimation on t/)
   assert.match(icon, /interval: 40/)
 })
+
+test("h reaches hour by hour, though the key catcher reads it as left", () => {
+  // PanelKeyCatcher turns h/j/k/l into moves before onTextKey sees them.
+  const panel = read("Panel.qml")
+  assert.match(panel, /id: keyFront[\s\S]*?event\.text === "h"[\s\S]*?root\.toggleHours\(\)/)
+  assert.match(panel, /focusTarget: keyFront/)
+  assert.doesNotMatch(panel, /keyCatcher\.forceActiveFocus/)
+})
