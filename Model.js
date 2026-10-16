@@ -353,8 +353,10 @@ function geocodeQuery(text) {
   return GEOCODE_URL + "?name=" + encodeURIComponent(trim(text)) + "&count=6&language=en&format=json"
 }
 
+var USER_AGENT = "omarchy-isobar/1.1 (github.com/atsokolas/omarchy-isobar-plugin)"
+
 function curl(url, seconds) {
-  return ["curl", "-fsS", "--compressed", "--max-time", String(seconds || 8), "-A", "omarchy-isobar/1.0", url]
+  return ["curl", "-fsS", "--compressed", "--max-time", String(seconds || 8), "-A", USER_AGENT, url]
 }
 
 function column(block, key, i) {
@@ -806,6 +808,30 @@ function pressureTrend(fc, lms) {
 // ---------------------------------------------------------------------------
 // Sky: sun and moon
 
+// Inside the polar circles Open-Meteo marks a day without a sunrise or
+// sunset with both at midnight: "night" when the sun stays down, "day" when
+// it stays up, else "".
+function polar(day) {
+  if (!day) return ""
+  var d = num(day.daylight)
+  if (!isNaN(d)) return d <= 60 ? "night" : d >= DAY_MS / 1000 - 60 ? "day" : ""
+  if (isNaN(day.sunrise) || isNaN(day.sunset)) return ""
+  return day.sunset <= day.sunrise ? "night" : day.sunset - day.sunrise >= DAY_MS ? "day" : ""
+}
+
+// Sunrises and sunsets that really happen, for hairlines on the chart.
+function sunEvents(fc) {
+  var out = []
+  if (!fc || !fc.daily) return out
+  for (var i = 0; i < fc.daily.length; i++) {
+    var d = fc.daily[i]
+    if (polar(d) !== "") continue
+    if (!isNaN(d.sunrise)) out.push({ t: d.sunrise, rise: true })
+    if (!isNaN(d.sunset)) out.push({ t: d.sunset, rise: false })
+  }
+  return out
+}
+
 // Fraction of the way from sunrise to sunset; <0 before dawn, >1 after dusk.
 function sunProgress(day, lms) {
   if (!day || isNaN(day.sunrise) || isNaN(day.sunset) || day.sunset <= day.sunrise) return NaN
@@ -1118,7 +1144,7 @@ function storedPlace(p) {
 }
 
 function barPlaces(list) {
-  return normalizePlaces(list).filter(function(q) { return q.onBar })
+  return normalizePlaces(list).filter(function(q) { return q.onBar }).slice(0, MAX_BAR_PLACES)
 }
 
 // Puts a place on the bar or takes it off. A full bar refuses rather than
@@ -1208,11 +1234,21 @@ function comfortWord(dewC, tempC) {
   var d = num(dewC), t = num(tempC)
   if (isNaN(d)) return ""
   if (!isNaN(t) && t <= 10) return d <= 2 ? "Crisp" : "Damp"
+  // Near saturation the air is wet whatever the dew point says.
+  if (!isNaN(t) && t < 20 && t - d <= 2) return "Damp"
   if (d < 10) return "Dry"
   if (d < 16) return "Comfortable"
   if (d < 18) return "Sticky"
   if (d < 21) return "Muggy"
   return "Oppressive"
+}
+
+// The humidity tile's second line: how the air feels, with the dew point
+// when there's room for it beside the word.
+function dewLine(word, dewText) {
+  if (!word) return "Dew point " + dewText
+  var s = word + ", dew " + dewText
+  return s.length <= 16 ? s : word
 }
 
 function andList(items) {
@@ -1223,13 +1259,16 @@ function andList(items) {
 
 // What to wear, said the way a person would: "A jacket and an umbrella."
 // `swing` is the day's spread in °C; layers only matter when it's wide.
+// Feels-like steps, in °C and roughly °F: gloves below 27°, a warm coat to
+// 41°, a jacket to 54°, a light jacket to 63°.
 function wearHint(feelsC, pop, uv, swing, isDay) {
   var f = num(feelsC)
   if (isNaN(f)) return ""
   var items = []
-  if (f <= 0) items.push("a warm coat", "gloves")
-  else if (f <= 8) items.push("a warm coat")
-  else if (f <= 15) items.push("a jacket")
+  if (f <= -3) items.push("a warm coat", "gloves")
+  else if (f <= 5) items.push("a warm coat")
+  else if (f <= 12) items.push("a jacket")
+  else if (f <= 17) items.push("a light jacket")
   if (num(swing) >= 10 && f > 0) items.push("layers")
   if (num(pop) >= 50) items.push("an umbrella")
   if (isDay && num(uv) >= 6) items.push("sunglasses")
@@ -1237,11 +1276,12 @@ function wearHint(feelsC, pop, uv, swing, isDay) {
   return capital(andList(items)) + "."
 }
 
-// For the next twelve hours from now: the coldest it will feel, the best
-// chance of rain, the strongest sun, and how far the day swings.
+// For the next eight hours — the time you're likely to be out in it — the
+// coldest it will feel, the best chance of rain, the strongest sun, and how
+// far the day swings.
 function wearNow(fc, lms) {
   if (!fc || !fc.current) return ""
-  var hours = upcomingHours(fc, lms, 12)
+  var hours = upcomingHours(fc, lms, 8)
   var feels = num(fc.current.feels), pop = 0, uv = 0, lo = Infinity, hi = -Infinity
   for (var i = 0; i < hours.length; i++) {
     var h = hours[i]
@@ -1317,7 +1357,7 @@ function nwsCovers(lat, lon) {
 
 function alertsCommand(lat, lon) {
   var url = ALERTS_URL + "?point=" + num(lat).toFixed(4) + "," + num(lon).toFixed(4)
-  return ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "isobar (github.com/atsokolas)", "-H", "Accept: application/geo+json", url]
+  return ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", USER_AGENT, "-H", "Accept: application/geo+json", url]
 }
 
 function parseAlerts(raw, nowMs) {
@@ -1337,6 +1377,8 @@ function parseAlerts(raw, nowMs) {
       description: trim(String(p.description || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
       instruction: trim(String(p.instruction || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
       severity: String(p.severity || "Unknown"),
+      // An update to an alert is a new message naming the ones it replaces.
+      refs: (p.references || []).map(function(r) { return r && String(r.identifier || r["@id"] || "") }).filter(function(r) { return !!r }),
       ends: isNaN(ends) ? NaN : ends,
       onset: Date.parse(p.onset || p.effective || "")
     })
@@ -1352,6 +1394,15 @@ function activeAlerts(list, nowMs) {
   return (list || []).filter(function(a) { return isNaN(a.ends) || a.ends > nowMs })
 }
 
+// Live alerts not yet mentioned: neither this message nor any it updates.
+function freshAlerts(list, seen, nowMs) {
+  var known = seen || {}
+  return activeAlerts(list, nowMs).filter(function(a) {
+    if (known[a.id]) return false
+    return !(a.refs || []).some(function(r) { return !!known[r] })
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Golden hour: 0 most of the day, rising to 1 at sunrise and sunset and
 // fading over twenty-odd minutes either side.
@@ -1361,6 +1412,8 @@ function goldenGlow(fc, lms) {
   var best = 0
   for (var i = 0; i < fc.daily.length; i++) {
     var d = fc.daily[i]
+    // No sunrise, no golden hour — not a glow at midnight.
+    if (polar(d) !== "") continue
     var marks = [d.sunrise, d.sunset]
     for (var k = 0; k < 2; k++) {
       if (isNaN(marks[k])) continue
@@ -1528,7 +1581,7 @@ if (typeof module !== "undefined") {
     isWetHour: isWetHour, precipOutlook: precipOutlook, barHint: barHint, shortNoun: shortNoun,
     partOfDay: partOfDay, sentence: sentence, firstSentence: firstSentence, secondSentence: secondSentence,
     compass: compass, windWord: windWord, uvLabel: uvLabel, aqiReading: aqiReading, pressureTrend: pressureTrend,
-    sunProgress: sunProgress, moonPhase: moonPhase, moonIllumination: moonIllumination, moonName: moonName,
+    polar: polar, sunEvents: sunEvents, sunProgress: sunProgress, moonPhase: moonPhase, moonIllumination: moonIllumination, moonName: moonName,
     moonPolygon: moonPolygon, upperIntersection: upperIntersection, cloudArcs: cloudArcs,
     monotoneSegments: monotoneSegments, niceRange: niceRange, rangeSpan: rangeSpan, weekRange: weekRange,
     parseColors: parseColors,
@@ -1540,7 +1593,7 @@ if (typeof module !== "undefined") {
     addPlace: addPlace, removePlace: removePlace, offsetText: offsetText, compareLine: compareLine,
     sinceYesterday: sinceYesterday, dewPoint: dewPoint, comfortWord: comfortWord, wearHint: wearHint, wearNow: wearNow,
     nowcast: nowcast, nowcastEnd: nowcastEnd, nwsCovers: nwsCovers, alertsCommand: alertsCommand,
-    parseAlerts: parseAlerts, activeAlerts: activeAlerts, goldenGlow: goldenGlow,
+    parseAlerts: parseAlerts, activeAlerts: activeAlerts, freshAlerts: freshAlerts, dewLine: dewLine, USER_AGENT: USER_AGENT, goldenGlow: goldenGlow,
     nearestFullMoon: nearestFullMoon, fullMoonName: fullMoonName, fullMoonTonight: fullMoonTonight,
     seasonFirsts: seasonFirsts, placeNote: placeNote, noteKey: noteKey, pruneState: pruneState, parseState: parseState,
   }

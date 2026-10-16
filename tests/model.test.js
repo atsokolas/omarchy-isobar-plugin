@@ -413,7 +413,7 @@ test("an hour's readings leave out what the forecast doesn't carry", () => {
   const full = { t: 0, feels: 8, pop: 40, precip: 0.4, wind: 20, windDir: 315, gusts: 45, humidity: 81, uv: 3.2, isDay: true }
   const rows = Model.hourDetails(full, false)
   assert.deepEqual(rows.map(r => r.label), ["Feels like", "Rain", "Wind", "Humidity", "UV", "Wear"])
-  assert.equal(rows[5].value, "A warm coat")
+  assert.equal(rows[5].value, "A jacket")
   const muggy = Model.hourDetails({ t: 0, temp: 27, feels: 29, pop: 10, humidity: 60, isDay: true, uv: 7 }, false)
   assert.equal(muggy.find(r => r.label === "Comfort").value, "Muggy")
   assert.equal(muggy.find(r => r.label === "Wear").value, "Sunglasses")
@@ -473,6 +473,9 @@ test("dew point reads as how the air feels", () => {
   assert.equal(Model.comfortWord(-4, 3), "Crisp")
   assert.equal(Model.comfortWord(6, 8), "Damp")
   assert.equal(Model.comfortWord(NaN, 8), "")
+  // 56°F at 98%: the air is wet, whatever the dew point's band says.
+  assert.equal(Model.comfortWord(12.9, 13.3), "Damp")
+  assert.equal(Model.comfortWord(21, 22), "Oppressive")
 })
 
 test("what to wear, the way a person would say it", () => {
@@ -482,6 +485,36 @@ test("what to wear, the way a person would say it", () => {
   assert.equal(Model.wearHint(20, 10, 7, 4, false), "")
   assert.equal(Model.wearHint(27, 0, 3, 4, true), "T-shirt weather.")
   assert.equal(Model.wearHint(NaN, 0, 0, 0, true), "")
+})
+
+test("what to wear is sensible in both °F and °C", () => {
+  const f = deg => (deg - 32) * 5 / 9
+  // 56°F and drizzly is a light jacket and an umbrella, not a winter coat.
+  assert.equal(Model.wearHint(f(56), 70, 0, 4, false), "A light jacket and an umbrella.")
+  assert.equal(Model.wearHint(f(48), 0, 0, 4, false), "A jacket.")
+  assert.equal(Model.wearHint(f(38), 0, 0, 4, false), "A warm coat.")
+  assert.equal(Model.wearHint(f(20), 0, 0, 4, false), "A warm coat and gloves.")
+  assert.equal(Model.wearHint(f(68), 0, 0, 4, false), "")
+  assert.equal(Model.wearHint(14, 0, 0, 4, false), "A light jacket.")
+  assert.equal(Model.wearHint(9, 0, 0, 4, false), "A jacket.")
+  assert.equal(Model.wearHint(2, 0, 0, 4, false), "A warm coat.")
+  assert.equal(Model.wearHint(-6, 0, 0, 4, false), "A warm coat and gloves.")
+})
+
+test("what to wear looks at the hours you'll be out, not the small hours", () => {
+  // 13° now, falling to 4° twelve hours later: the night's chill isn't today's coat.
+  const time = [], temps = []
+  for (let i = 0; i < 48; i++) {
+    time.push(new Date(Date.UTC(2026, 9, 15, 14) + i * 3600000).toISOString().slice(0, 16))
+    temps.push(13 - Math.min(i, 12) * 0.75)
+  }
+  const fc = Model.parseForecast(JSON.stringify({
+    utc_offset_seconds: 0,
+    current: { time: "2026-10-15T14:00", temperature_2m: 13, apparent_temperature: 13, weather_code: 3, is_day: 1 },
+    hourly: { time, temperature_2m: temps, apparent_temperature: temps, weather_code: time.map(() => 3), is_day: time.map(() => 1), precipitation_probability: time.map(() => 0) },
+    daily: { time: ["2026-10-15", "2026-10-16"] }
+  }), 0)
+  assert.equal(Model.wearNow(fc, AT_2PM), "A jacket.")
 })
 
 function withMinutely(times, precip, current) {
@@ -521,7 +554,10 @@ test("the weather service covers the US and nowhere else", () => {
   assert.ok(!Model.nwsCovers(NaN, 0))
   const cmd = Model.alertsCommand(46.78672, -92.10049)
   assert.equal(cmd[cmd.length - 1], "https://api.weather.gov/alerts/active?point=46.7867,-92.1005")
-  assert.ok(cmd.includes("isobar (github.com/atsokolas)"))
+  // The weather service asks for a user agent it can reach someone through.
+  assert.ok(cmd.includes(Model.USER_AGENT))
+  assert.match(Model.USER_AGENT, /github\.com\/atsokolas\/omarchy-isobar-plugin/)
+  assert.ok(Model.curl("https://example.com").includes(Model.USER_AGENT))
 })
 
 test("alerts are read, ranked and expired", () => {
@@ -542,6 +578,28 @@ test("alerts are read, ranked and expired", () => {
   assert.deepEqual(Model.parseAlerts(JSON.stringify({ features: [] }), now), [])
 })
 
+test("the humidity tile keeps its line short enough to read whole", () => {
+  assert.equal(Model.dewLine("Muggy", "66°"), "Muggy, dew 66°")
+  assert.equal(Model.dewLine("Comfortable", "52°"), "Comfortable")
+  assert.equal(Model.dewLine("", "52°"), "Dew point 52°")
+  for (const w of ["Dry", "Comfortable", "Sticky", "Muggy", "Oppressive", "Crisp", "Damp"])
+    assert.ok(Model.dewLine(w, "−12°").length <= 16, w)
+})
+
+test("an update to an alert isn't announced as a new one", () => {
+  const now = Date.UTC(2026, 9, 15, 14)
+  const raw = JSON.stringify({ features: [
+    { properties: { id: "urn:2", status: "Actual", messageType: "Update", event: "Wind Advisory", severity: "Moderate", ends: "2026-10-16T07:00:00Z",
+      references: [{ "@id": "https://api.weather.gov/alerts/urn:1", identifier: "urn:1" }] } },
+    { properties: { id: "urn:9", status: "Actual", messageType: "Alert", event: "Flood Watch", severity: "Severe", ends: "2026-10-16T07:00:00Z" } }
+  ] })
+  const alerts = Model.parseAlerts(raw, now)
+  assert.deepEqual(alerts.find(a => a.id === "urn:2").refs, ["urn:1"])
+  assert.deepEqual(Model.freshAlerts(alerts, { "urn:1": now - 3600000 }, now).map(a => a.id), ["urn:9"])
+  assert.deepEqual(Model.freshAlerts(alerts, { "urn:2": now, "urn:9": now }, now), [])
+  assert.deepEqual(Model.freshAlerts(alerts, {}, now).map(a => a.id).sort(), ["urn:2", "urn:9"])
+})
+
 // ---- Delights ------------------------------------------------------------
 
 test("golden hour glows around sunrise and sunset, and only then", () => {
@@ -554,6 +612,29 @@ test("golden hour glows around sunrise and sunset, and only then", () => {
   assert.equal(Model.goldenGlow(fc, sunset + 40 * 60000), 0)
   assert.equal(Model.goldenGlow(fc, AT_2PM), 0)
   assert.equal(Model.goldenGlow(null, AT_2PM), 0)
+})
+
+test("inside the polar circles there's no golden hour at midnight", () => {
+  // Open-Meteo marks polar night and the midnight sun with both ends at 00:00.
+  const polar = (rise, set, daylight) => Model.parseForecast(JSON.stringify({
+    utc_offset_seconds: 3600,
+    current: { time: "2026-10-15T14:00", temperature_2m: -10, weather_code: 3, is_day: 0 },
+    hourly: { time: ["2026-10-15T14:00"], temperature_2m: [-10] },
+    daily: { time: ["2026-10-15", "2026-10-16"], sunrise: rise, sunset: set, daylight_duration: daylight }
+  }), 0)
+  const night = polar(["2026-10-15T00:00", "2026-10-16T00:00"], ["2026-10-15T00:00", "2026-10-16T00:00"], [0, 0])
+  const day = polar(["2026-10-15T00:00", "2026-10-16T00:00"], ["2026-10-16T00:00", "2026-10-17T00:00"], [86400, 86400])
+  const midnight = Date.UTC(2026, 9, 16, 0, 5)
+  assert.equal(Model.polar(night.daily[0]), "night")
+  assert.equal(Model.polar(day.daily[0]), "day")
+  assert.equal(Model.polar(synthetic([3]).daily[1]), "")
+  assert.equal(Model.goldenGlow(night, midnight), 0)
+  assert.equal(Model.goldenGlow(day, midnight), 0)
+  assert.deepEqual(Model.sunEvents(night), [])
+  assert.equal(Model.sunEvents(synthetic([3])).length, 6)
+  // Without daylight figures, the times alone tell.
+  assert.equal(Model.polar({ sunrise: 0, sunset: 0 }), "night")
+  assert.equal(Model.polar({ sunrise: 0, sunset: NaN }), "")
 })
 
 test("full moons go by their old names", () => {
@@ -619,6 +700,11 @@ test("a place earns a note for snow, storms and extremes, not routine rain", () 
   assert.equal(Model.placeNote(at(0, 30), AT_2PM, false, "Austin", alert, 0).text, "Austin is under a Heat Advisory")
   const note = Model.placeNote(at(73, -2), AT_2PM, false, "Tokyo")
   assert.equal(Model.noteKey("35.690,139.692", note, AT_2PM), "35.690,139.692|snow|2026-10-15")
+})
+
+test("the bar never carries more than three places, however shell.json reads", () => {
+  const many = [0, 1, 2, 3, 4].map(i => ({ name: "P" + i, latitude: i, longitude: i, onBar: true }))
+  assert.equal(Model.barPlaces(many).length, Model.MAX_BAR_PLACES)
 })
 
 test("remembered notes and alerts age out", () => {

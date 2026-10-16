@@ -23,6 +23,8 @@ Item {
   function drawIn() { revealAnim.restart() }
   NumberAnimation { id: revealAnim; target: root; property: "reveal"; from: 0; to: 1; duration: 1100; easing.type: Easing.OutCubic }
 
+  // Inside the polar circles: "night" with no sunrise, "day" with no sunset.
+  readonly property string polar: Model.polar(day)
   readonly property real progress: Model.sunProgress(day, lms)
   readonly property bool up: progress >= 0 && progress <= 1
   readonly property real arcLeft: Style.space(36)
@@ -117,7 +119,7 @@ Item {
   Text {
     anchors.left: parent.left
     anchors.bottom: parent.bottom
-    text: root.day ? "↑ " + Model.clockText(root.day.sunrise, root.use24) : ""
+    text: root.day && root.polar === "" ? "↑ " + Model.clockText(root.day.sunrise, root.use24) : ""
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -126,7 +128,7 @@ Item {
   Text {
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    text: root.day ? Model.clockText(root.day.sunset, root.use24) + " ↓" : ""
+    text: root.day && root.polar === "" ? Model.clockText(root.day.sunset, root.use24) + " ↓" : ""
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -136,9 +138,10 @@ Item {
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
     readonly property string delta: root.day && root.yesterday ? Model.daylightDeltaText(root.day.daylight, root.yesterday.daylight) : ""
-    text: root.day
-      ? (root.up ? "" : Model.moonName(root.moonPhase) + "  ·  ") + Model.durationText(root.day.daylight) + " of light" + (delta ? ", " + delta : "")
-      : ""
+    text: !root.day ? ""
+      : root.polar === "night" ? Model.moonName(root.moonPhase) + "  ·  no sunrise today"
+      : root.polar === "day" ? "The sun doesn't set today"
+      : (root.up ? "" : Model.moonName(root.moonPhase) + "  ·  ") + Model.durationText(root.day.daylight) + " of light" + (delta ? ", " + delta : "")
     color: root.dim
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption

@@ -69,6 +69,8 @@ Item {
   function yAt(i) {
     var r = range
     var v = valueAt(i)
+    // A missing hour sits mid-chart rather than tearing the line.
+    if (isNaN(v)) v = (r.lo + r.hi) / 2
     return curveTop + (1 - (v - r.lo) / (r.hi - r.lo)) * (curveBottom - curveTop)
   }
   // The thermometer reads Celsius whatever the display units are.
@@ -123,7 +125,7 @@ Item {
       var t0 = root.hours[0].t
       for (var e = 0; e < root.sunEvents.length; e++) {
         var frac = (root.sunEvents[e].t - t0) / Model.HOUR_MS
-        if (frac < 0 || frac > n) continue
+        if (!(frac >= 0 && frac <= n)) continue
         var sx = Math.round(root.inset + frac * root.slot) + 0.5
         ctx.beginPath()
         for (var y = root.labelTop; y < root.barsBottom; y += 4) { ctx.moveTo(sx, y); ctx.lineTo(sx, Math.min(y + 2, root.barsBottom)) }
