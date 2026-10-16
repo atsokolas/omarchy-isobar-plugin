@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "atsokolas.isobar",
   "name": "Isobar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "atsokolas",
   "license": "MIT",
   "description": "The weather, drawn in your theme — a sky that moves, a forecast in a sentence, and the next 24 hours at a glance.",

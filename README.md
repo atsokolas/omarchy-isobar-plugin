@@ -10,18 +10,18 @@ A small sky on the bar beside the temperature. When rain is on its way, the bar 
 
 - **A drawn sky.** The icons are drawn on a Canvas, not set in a font: sun, cloud, fog, drizzle, rain, sleet, snow and storms. Each is a single clean stroke at the bar's 14px and the panel's 72px. At night it draws the moon in its actual phase, with a few stars.
 - **Weather that moves, briefly.** Rays turn, rain falls, snow sways, fog drifts and lightning flickers twice, but only while you hover or the panel is open. When the sky changes, the icon pops in. A still bar stays still.
-- **A forecast in a sentence.** "Drizzle until about 8 pm. 5° colder than this time yesterday." It says how long the current sky lasts and what comes after, compares the hour with the same hour yesterday when the change is one you'd feel (3° or more), and mentions gusts or a high UV index when they matter. Underneath, what to wear: "A jacket and an umbrella", or on a good day, "T-shirt weather."
+- **A forecast in a sentence.** "Drizzle until about 8 pm. 5° colder than this time yesterday." It says how long the current sky lasts and what comes after, compares the hour with the same hour yesterday when the change is one you'd feel (3° or more), and mentions gusts or a high UV index when they matter. Underneath, what to wear for the next few hours: "A light jacket and an umbrella", or on a good day, "T-shirt weather."
 - **The next two hours.** When rain is falling or due, the sentence reads from the fifteen-minute forecast — "Rain starts in about 20 minutes, easing by 8:40 pm" — and a strip of bars shows how hard. The bar's hint uses the same data, so "Rain til 8pm" ends when the rain does.
 - **Alerts.** In the US, warnings and advisories from the National Weather Service: a red band at the top of the panel with the event and headline (click for what the forecaster wrote), a small red mark on the bar's sky, and one toast per alert. Outside the US there's no free equivalent, so Isobar shows nothing rather than guessing.
 - **Twenty-four hours as one line.** A smooth curve that passes through every hour and never invents a peak between them. It's coloured along its length by temperature, with night as a faint band behind it, sunrise and sunset as dotted hairlines, and the chance of rain as bars beneath. Hover over it, or use `←` `→`, to read any hour.
 - **Hour by hour.** Press `h` (or the clock) for the forecast an hour at a time, for home or whichever place is open. Scroll, drag or use `←` `→` and the hours glide under a fixed lens. Free scrolling lingers at each hour, and when you let go the strip springs onto the nearest one, a touch past and back. The hour in the lens is read out large above, with its feels-like, rain, wind, humidity, how the air feels ("Muggy", "Crisp") and what to wear below. Midnight is marked where it falls, and a thin track shows where you are in the week. `↑` `↓` move a day at a time.
 - **The week as thermometers.** Each day's low and high sit on the week's shared scale, so a cold snap looks like one. Today's bar shows where the temperature is right now. Pick a day (`↑` `↓`, `1`–`7`, or a click) to put its hours on the chart.
-- **The small facts.** A wind compass that points where the wind is going, humidity with the dew point in words ("Sticky, dew 63°"), UV, air quality (or the pressure trend), and the sun's arc across today. It also shows how much daylight you gained or lost since yesterday, which tells you which way the year is turning.
+- **The small facts.** A wind compass that points where the wind is going, humidity with how the air feels ("Muggy, dew 66°", "Crisp", "Damp"), UV, air quality (or the pressure trend), and the sun's arc across today. It also shows how much daylight you gained or lost since yesterday, which tells you which way the year is turning.
 - **In your theme.** Every colour comes from the current Omarchy theme's `colors.toml`: a yellow sun, blue rain, and a thermometer that runs from the theme's magenta through blue, cyan and green to its red. Change the theme and the panel changes with it.
 - **Never blank.** The last good forecast is cached on disk, so the bar has a temperature the moment the shell starts. If the network drops, the panel keeps the last forecast, says how old it is, and retries with backoff (30s, 1m, 2m … up to 10m). After the machine wakes from sleep it fetches a fresh forecast within a minute.
 - **Places.** Keep up to eight other cities beside home. The Places page shows each one's sky, temperature and local time, and how far ahead or behind you it is ("14 hours ahead"). Open one to see the full forecast there: its sentence, its hours, its week, its sun. A line underneath compares it with home ("6° warmer than Duluth · 14 hours ahead"). From the forecast, `[` and `]` step from place to place.
 - **A heads-up, if you want one.** An optional quiet toast about half an hour before rain or snow, once per spell.
-- **Golden hour.** For twenty-odd minutes around sunrise and sunset the bar's sky warms and glows in the theme's orange — and a place pinned to the bar does the same at its own sunset, which is a nice way to notice it's evening in Tokyo.
+- **Golden hour.** For twenty-odd minutes around sunrise and sunset (not in a polar night or under the midnight sun, where there's neither) the bar's sky warms and glows in the theme's orange — and a place pinned to the bar does the same at its own sunset, which is a nice way to notice it's evening in Tokyo.
 - **Full moons, by name.** On the night of a full moon the panel names it — the Hunter's Moon, the Harvest Moon nearest the equinox, a Blue Moon when a month has two — and the moon on the bar gets a little light of its own.
 - **Firsts of the season.** "First frost tonight." "First 70° day since May." A quiet toast the first time each happens after a long gap — a few times a year at most. Isobar remembers the last time it saw each, so the first year it's installed it is only learning.
 - **Notes from your places.** When something worth mentioning happens somewhere you keep an eye on — snow, a thunderstorm, real heat or cold, an alert — the Places page says so ("It's snowing in Tokyo") and a toast tells you, once per place per day. Routine rain isn't news.
@@ -29,10 +29,10 @@ A small sky on the bar beside the temperature. When rain is on its way, the bar 
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/atsokolas/omarchy-isobar-plugin.git --enable
+omarchy plugin add https://github.com/atsokolas/omarchy-isobar-plugin
 ```
 
-Move it if it didn't land where you want it:
+That clones it into `~/.config/omarchy/plugins/atsokolas.isobar`, checks it against the shell's manifest schema, and offers to put it on the bar (add `--enable` to skip the question). Move it if it didn't land where you want it:
 
 ```bash
 omarchy bar move atsokolas.isobar --section center --after omarchy.clock
@@ -114,9 +114,17 @@ omarchy-shell atsokolas.isobar alerts     # Wind Advisory — Wind Advisory unti
 omarchy-shell atsokolas.isobar refresh
 ```
 
-## Data
+## Data and privacy
 
-The forecast, nowcast and air quality come from [Open-Meteo](https://open-meteo.com), which is free and needs no key. Alerts come from the [National Weather Service](https://www.weather.gov/documentation/services-web-api), for points in the US only. Your location comes from your network address via `ipinfo.io`, but only when you haven't set one. Nothing else leaves the machine. Isobar writes its cache under `~/.cache/omarchy/isobar/`, a small memory of firsts and notes it has already mentioned in `~/.local/state/omarchy/isobar/state.json`, the shared location file when you change location, and its own `shell.json` entry when you change a setting.
+Isobar has no account, no key and no telemetry. To fetch a forecast it has to say where, so these leave the machine:
+
+- **Open-Meteo** ([forecast](https://open-meteo.com/en/docs) and [air quality](https://open-meteo.com/en/docs/air-quality-api)) gets the coordinates of home and of each saved place, every refresh. Weather data by [Open-Meteo.com](https://open-meteo.com/), under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **Open-Meteo's geocoder** gets what you type into the location and add-a-place searches, and a location name that has no coordinates.
+- **The National Weather Service** ([api.weather.gov](https://www.weather.gov/documentation/services-web-api)) gets the coordinates of home and of each saved place inside the US, when alerts are on. Points elsewhere are never sent.
+- **ipinfo.io** sees your IP address, and only when you haven't set a location; it answers with roughly where that is.
+- **windy.com** opens in your browser with the coordinates, when you ask for the radar (`o`).
+
+Every request is a plain `curl` with an `omarchy-isobar` user agent. Nothing else leaves the machine. Isobar writes its cache under `~/.cache/omarchy/isobar/`, a small memory of firsts and notes it has already mentioned in `~/.local/state/omarchy/isobar/state.json`, the shared location file when you change location, and its own `shell.json` entry when you change a setting.
 
 ## Requirements
 
