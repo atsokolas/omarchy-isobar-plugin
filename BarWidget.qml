@@ -49,6 +49,14 @@ BarWidget {
   readonly property bool ready: !!(service && service.current)
   readonly property string tempLabel: service ? service.tempLabel : ""
   readonly property string hint: service && !root.vertical ? service.hint : ""
+  readonly property var palette: service ? service.palette : null
+  readonly property color warm: palette ? palette.orange : "#e0a060"
+  readonly property color urgent: palette ? palette.red : "#e06060"
+  readonly property bool alerting: !!(service && service.homeAlerts.length > 0)
+  // Golden hour warms the sky; a full moon gets a little light of its own.
+  readonly property real golden: service ? service.golden : 0
+  readonly property bool moonlit: !!(service && service.night && service.fullMoon !== "")
+
   // A vertical bar has no room beside home, so it keeps to home.
   readonly property var barPlaces: service && !root.vertical ? service.barPlaces : []
 
@@ -73,6 +81,12 @@ BarWidget {
       return s.tempLabel + " " + Model.conditionLabel(s.current.code, s.current.isDay)
     }
     function summary(): string { return root.service ? root.service.sentence : "" }
+    // One line per live NWS alert for home: "Wind Advisory — until 7 PM".
+    function alerts(): string {
+      var s = root.service
+      if (!s) return ""
+      return s.homeAlerts.map(function(a) { return a.event + (a.headline ? " — " + a.headline : "") }).join("\n")
+    }
     function place(): string { return root.service ? root.service.placeName : "" }
     // One line per saved place: "Tokyo  14°  Clear  6:12 am".
     function places(): string {
@@ -144,13 +158,28 @@ BarWidget {
         strength: root.service ? root.service.strength : 1
         moonPhase: root.service ? root.service.moonPhase : 0.5
         iconSize: Math.round(button.fontSize * 1.18)
-        iconColor: button.foreground
+        iconColor: root.golden > 0 ? Qt.tint(button.foreground, Qt.rgba(root.warm.r, root.warm.g, root.warm.b, 0.65 * root.golden)) : button.foreground
+        glow: root.golden > 0 ? root.golden : (root.moonlit ? 0.5 : 0)
+        glowColor: root.golden > 0 ? root.warm : button.foreground
         animated: !!(root.service && root.service.animate) && (hover.hovered || root.opened)
         opacity: root.ready ? 1 : 0.45
         x: root.vertical ? (parent.width - width) / 2 : button.scaledHorizontalMargin
         y: root.vertical ? button.scaledVerticalPadding : (parent.height - height) / 2
 
         Behavior on opacity { NumberAnimation { duration: 400 } }
+
+        // While the weather service has an alert out for home.
+        Rectangle {
+          visible: root.alerting
+          width: Math.max(4, Math.round(parent.width * 0.3))
+          height: width
+          radius: width / 2
+          x: parent.width - width * 0.55
+          y: -height * 0.3
+          color: root.urgent
+          border.width: 1
+          border.color: root.bar ? root.bar.background : "transparent"
+        }
       }
 
       Text {
@@ -196,6 +225,7 @@ BarWidget {
             required property var modelData
             readonly property var fc: root.service ? (root.service.placeForecasts[modelData.key] || null) : null
             readonly property var cur: fc ? fc.current : null
+            readonly property real golden: fc && root.service ? Model.goldenGlow(fc, Model.nowLocal(root.service.nowMs, fc.offset)) : 0
             implicitWidth: placeName.implicitWidth + content.gap + placeIcon.width + content.gap + placeTemp.implicitWidth
             implicitHeight: content.height
             height: content.height
@@ -219,7 +249,9 @@ BarWidget {
               strength: barPlace.cur ? Model.condition(barPlace.cur.code).strength : 1
               moonPhase: root.service ? root.service.moonPhase : 0.5
               iconSize: Math.round(button.fontSize * 1.05)
-              iconColor: button.foreground
+              iconColor: barPlace.golden > 0 ? Qt.tint(button.foreground, Qt.rgba(root.warm.r, root.warm.g, root.warm.b, 0.65 * barPlace.golden)) : button.foreground
+              glow: barPlace.golden
+              glowColor: root.warm
               animated: !!(root.service && root.service.animate) && placeMouse.containsMouse
               opacity: barPlace.cur ? 1 : 0.45
             }

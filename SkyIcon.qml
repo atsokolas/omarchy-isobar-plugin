@@ -22,6 +22,9 @@ Item {
   property color boltColor: iconColor
   // Moving weather: rays turn, rain falls, fog drifts.
   property bool animated: false
+  // A soft light behind the sky, 0..1: golden hour, or a full moon.
+  property real glow: 0
+  property color glowColor: sunColor
 
   // 0..1, looped while animated. A resting frame is chosen so a still icon
   // still reads as rain rather than as a cloud with a few stray lines.
@@ -77,6 +80,38 @@ Item {
   onMoonColorChanged: canvas.requestPaint()
   onWetColorChanged: canvas.requestPaint()
   onBoltColorChanged: canvas.requestPaint()
+
+  // Behind the sky, on its own: the clouds knock out what's under them, and
+  // the light should stay.
+  Canvas {
+    id: halo
+    anchors.centerIn: parent
+    width: parent.width * 1.9
+    height: width
+    visible: root.glow > 0.01
+    opacity: root.glow
+    antialiasing: true
+    renderStrategy: Canvas.Cooperative
+    onWidthChanged: requestPaint()
+    onVisibleChanged: if (visible) requestPaint()
+    Connections {
+      target: root
+      function onGlowColorChanged() { halo.requestPaint() }
+    }
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      var c = width / 2
+      var g = ctx.createRadialGradient(c, c, 0, c, c, c)
+      var col = root.glowColor
+      g.addColorStop(0, Qt.rgba(col.r, col.g, col.b, 0.55))
+      g.addColorStop(0.45, Qt.rgba(col.r, col.g, col.b, 0.22))
+      g.addColorStop(1, Qt.rgba(col.r, col.g, col.b, 0))
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, width, height)
+    }
+    Behavior on opacity { NumberAnimation { duration: 1200; easing.type: Easing.InOutSine } }
+  }
 
   Canvas {
     id: canvas

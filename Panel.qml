@@ -41,6 +41,7 @@ Panel {
     id: view
     forecast: root.away ? (root.service.placeForecasts[root.viewKey] || null) : root.service.forecast
     air: root.away ? null : root.service.air
+    alerts: root.service.alertsFor(root.viewKey)
     imperial: root.service.imperial
     use24: root.service.use24
     nowMs: root.service.nowMs
@@ -574,6 +575,93 @@ Panel {
             }
           }
 
+          // ---- An alert from the weather service, when there is one -------
+          // Red, because it's the one thing on the page that may matter.
+          // Click to read what the forecaster wrote.
+          Item {
+            id: alertBand
+            Layout.fillWidth: true
+            visible: view.activeAlerts.length > 0
+            property bool expanded: false
+            readonly property var first: view.activeAlerts.length > 0 ? view.activeAlerts[0] : null
+            implicitHeight: alertColumn.implicitHeight + Style.space(20)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.1)
+              border.width: 1
+              border.color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.35)
+            }
+            Rectangle {
+              x: 0
+              y: Style.space(8)
+              width: Style.space(3)
+              height: parent.height - Style.space(16)
+              radius: width / 2
+              color: root.urgent
+            }
+
+            Column {
+              id: alertColumn
+              x: Style.space(16)
+              y: Style.space(10)
+              width: parent.width - Style.space(28)
+              spacing: Style.space(4)
+
+              Repeater {
+                model: alertBand.expanded ? view.activeAlerts : (alertBand.first ? [alertBand.first] : [])
+                Column {
+                  required property var modelData
+                  width: alertColumn.width
+                  spacing: Style.space(3)
+                  Text {
+                    width: parent.width
+                    text: modelData.event
+                    color: root.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                  }
+                  Text {
+                    width: parent.width
+                    visible: text !== ""
+                    text: modelData.headline
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                  }
+                  Text {
+                    width: parent.width
+                    visible: alertBand.expanded && text !== ""
+                    text: modelData.description + (modelData.instruction ? "\n\n" + modelData.instruction : "")
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    lineHeight: 1.2
+                    wrapMode: Text.WordWrap
+                    bottomPadding: Style.space(6)
+                  }
+                }
+              }
+
+              Text {
+                text: alertBand.expanded ? "Less" : (view.activeAlerts.length > 1 ? "And " + (view.activeAlerts.length - 1) + " more  ·  read" : "Read the details")
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: alertBand.expanded = !alertBand.expanded
+            }
+          }
+
           // ---- The sky right now ----------------------------------------
           Item {
             Layout.fillWidth: true
@@ -692,17 +780,34 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
+          // What to put on, and on the night of a full moon, its name.
+          Text {
+            Layout.fillWidth: true
+            Layout.topMargin: -Style.space(4)
+            visible: text !== ""
+            text: {
+              var bits = []
+              if (view.wear) bits.push(view.wear)
+              if (view.fullMoon && view.night) bits.push("The " + view.fullMoon + " is up tonight.")
+              return bits.join("  ")
+            }
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
           // ---- The next two hours, when something is falling -------------
           Item {
             id: nowcast
             Layout.fillWidth: true
-            readonly property var slots: root.fc ? root.fc.minutely.filter(function(m) { return m.t + 15 * 60000 > root.lms }) : []
+            readonly property var slots: view.nowcast.slots
             readonly property real peak: {
               var p = 0.5
               for (var i = 0; i < slots.length; i++) p = Math.max(p, slots[i].precip)
               return p
             }
-            visible: slots.length > 0 && (view.outlook.state === "now" || view.outlook.state === "soon")
+            visible: slots.length > 0 && (view.nowcast.line !== "" || view.outlook.state === "now" || view.outlook.state === "soon")
             implicitHeight: Style.space(44)
 
             Rectangle {
@@ -981,7 +1086,7 @@ Panel {
             Tile {
               label: "HUMIDITY"
               value: root.now && !isNaN(root.now.humidity) ? Math.round(root.now.humidity) + "%" : "—"
-              sub: root.now && !isNaN(root.now.dew) ? "Dew point " + Model.tempText(root.now.dew, root.imperial) : ""
+              sub: root.now && !isNaN(root.now.dew) ? (view.comfort ? view.comfort + ", dew " : "Dew point ") + Model.tempText(root.now.dew, root.imperial) : ""
             }
 
             Tile {
@@ -1289,11 +1394,12 @@ Panel {
                   }
                 }
                 Text {
+                  readonly property var note: placeCard.place ? root.service.noteFor(placeCard.place.key) : null
                   width: parent.width
-                  text: placeCard.cur
+                  text: note ? note.text : placeCard.cur
                     ? Model.conditionLabel(placeCard.cur.code, placeCard.cur.isDay) + (placeCard.day ? "  ·  H " + Model.tempText(placeCard.day.max, root.imperial) + "  L " + Model.tempText(placeCard.day.min, root.imperial) : "")
                     : (root.service.fetchingPlace !== "" && placeCard.place && root.service.fetchingPlace === placeCard.place.key ? "Looking at the sky…" : (placeCard.place ? placeCard.place.description : ""))
-                  color: root.dim
+                  color: note ? root.accent : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -1506,6 +1612,48 @@ Panel {
             ToggleSwitch {
               checked: root.service.openHours
               onToggled: root.persistSettings({ openHours: !root.service.openHours })
+            }
+          }
+        }
+
+        PanelHero {
+          Layout.fillWidth: true
+          title: "Weather alerts"
+          meta: "Warnings from the National Weather Service, in the US"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          trailingControl: Component {
+            ToggleSwitch {
+              checked: root.service.alertsOn
+              onToggled: root.persistSettings({ alerts: !root.service.alertsOn })
+            }
+          }
+        }
+
+        PanelHero {
+          Layout.fillWidth: true
+          title: "Firsts of the season"
+          meta: "First frost, first snow, the first warm day in months"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          trailingControl: Component {
+            ToggleSwitch {
+              checked: root.service.firsts
+              onToggled: root.persistSettings({ firsts: !root.service.firsts })
+            }
+          }
+        }
+
+        PanelHero {
+          Layout.fillWidth: true
+          title: "Notes from your places"
+          meta: "Snow, storms and real heat or cold where you keep an eye"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          trailingControl: Component {
+            ToggleSwitch {
+              checked: root.service.notes
+              onToggled: root.persistSettings({ notes: !root.service.notes })
             }
           }
         }
