@@ -14,7 +14,7 @@ Item {
   property int strength: 2
   property real moonPhase: 0.5
   property real iconSize: Style.font.icon
-  property color iconColor: Color.foreground
+  property color iconColor: "#cccccc"
   // The panel tints the sky in the theme's colours; the bar keeps it mono.
   property color sunColor: iconColor
   property color moonColor: iconColor

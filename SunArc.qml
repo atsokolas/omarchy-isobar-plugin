@@ -14,7 +14,7 @@ Item {
   property real lms: 0
   property bool use24: false
   property real moonPhase: 0.5
-  property color foreground: Color.foreground
+  property color foreground: "#cccccc"
   property color dim: Qt.darker(foreground, 1.55)
   property color sunColor: foreground
   property string fontFamily: Style.font.family

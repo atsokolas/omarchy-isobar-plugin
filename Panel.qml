@@ -24,7 +24,7 @@ Panel {
   property int placeCursor: 0
 
   readonly property var barIdentity: hostWidget || root
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : (service && service.palette ? service.palette.foreground : "#cccccc")
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 

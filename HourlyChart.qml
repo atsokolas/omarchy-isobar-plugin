@@ -15,7 +15,7 @@ Item {
   property bool use24: false
   property bool startsNow: true
   property var sunEvents: []          // [{t, rise: bool}]
-  property color foreground: Color.foreground
+  property color foreground: "#cccccc"
   property color dim: Qt.darker(foreground, 1.55)
   property color wet: palette ? palette.blue : foreground
   property string fontFamily: Style.font.family

@@ -25,7 +25,7 @@ test("the manifest's entry points exist and agree on the id", () => {
 test("colours come from the theme, not from surfaces plugins can't see", () => {
   // The shell's Color singleton isn't reliably there for third-party
   // plugins; reading it logs a TypeError and paints nothing.
-  for (const file of qml) assert.doesNotMatch(read(file), /Color\.(popups|accent|urgent)/, file)
+  for (const file of qml) assert.doesNotMatch(read(file), /\bColor\./, file)
 })
 
 test("no development hooks ship", () => {
