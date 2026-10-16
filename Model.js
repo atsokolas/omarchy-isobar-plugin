@@ -545,6 +545,10 @@ function hourDetails(h, imperial) {
   }
   if (!isNaN(num(h.humidity))) out.push({ label: "Humidity", value: Math.round(num(h.humidity)) + "%" })
   if (!isNaN(num(h.uv)) && h.isDay) out.push({ label: "UV", value: uvLabel(h.uv) + "  " + Math.round(num(h.uv)) })
+  var feel = comfortWord(dewPoint(h.temp, h.humidity), h.temp)
+  if (feel) out.push({ label: "Air", value: feel })
+  var wear = wearHint(h.feels, h.pop, h.uv, 0, h.isDay)
+  if (wear) out.push({ label: "Wear", value: wear.replace(/\.$/, "") })
   return out
 }
 
@@ -593,6 +597,8 @@ function precipOutlook(fc, lms) {
     for (var i = 1; i < hours.length; i++) {
       if (!isWetHour(hours[i])) { end = hours[i].t; break }
     }
+    var sooner = nowcastEnd(fc, lms)
+    if (!isNaN(sooner) && (isNaN(end) || sooner < end)) end = sooner
     return { state: "now", startMs: lms, endMs: end, minutes: 0, noun: cur.noun, kind: cur.kind }
   }
 
@@ -704,7 +710,13 @@ function firstSentence(fc, lms, use24) {
 function secondSentence(fc, lms, imperial) {
   var td = today(fc, lms), yd = yesterday(fc, lms)
   var bits = []
-  if (td && yd && !isNaN(td.max) && !isNaN(yd.max)) {
+  // The same hour yesterday is how a change is felt; it's only worth saying
+  // when it's noticeable. Without yesterday's hours, the highs stand in.
+  var hourAgo = sinceYesterday(fc, lms, imperial)
+  if (!isNaN(hourAgo)) {
+    if (hourAgo >= 3) bits.push(hourAgo + "° warmer than this time yesterday")
+    else if (hourAgo <= -3) bits.push(Math.abs(hourAgo) + "° colder than this time yesterday")
+  } else if (td && yd && !isNaN(td.max) && !isNaN(yd.max)) {
     var diff = deltaDegrees(td.max - yd.max, imperial)
     if (diff >= 2) bits.push(diff + "° warmer than yesterday")
     else if (diff <= -2) bits.push(Math.abs(diff) + "° cooler than yesterday")
@@ -1164,6 +1176,332 @@ function compareLine(there, here, imperial, homeName) {
   return bits.join("  ·  ")
 }
 
+// ---------------------------------------------------------------------------
+// Since yesterday: the same hour, a day ago. Whole degrees in the units on
+// screen, or NaN when yesterday's hour isn't in the forecast.
+
+function sinceYesterday(fc, lms, imperial) {
+  if (!fc || !fc.current) return NaN
+  var i = hourIndex(fc, lms - DAY_MS)
+  if (i < 0) return NaN
+  return deltaDegrees(fc.current.temp - fc.hourly[i].temp, imperial)
+}
+
+// ---------------------------------------------------------------------------
+// Comfort: how the air feels, and what to put on for it.
+
+// Magnus formula; good to a few tenths of a degree in weather that matters.
+function dewPoint(tempC, rh) {
+  var t = num(tempC), h = num(rh)
+  if (isNaN(t) || isNaN(h) || h <= 0) return NaN
+  var g = Math.log(h / 100) + 17.62 * t / (243.12 + t)
+  return 243.12 * g / (17.62 - g)
+}
+
+function comfortWord(dewC, tempC) {
+  var d = num(dewC), t = num(tempC)
+  if (isNaN(d)) return ""
+  if (!isNaN(t) && t <= 10) return d <= 2 ? "Crisp" : "Damp"
+  if (d < 10) return "Dry"
+  if (d < 16) return "Comfortable"
+  if (d < 18) return "Sticky"
+  if (d < 21) return "Muggy"
+  return "Oppressive"
+}
+
+function andList(items) {
+  if (items.length === 0) return ""
+  if (items.length === 1) return items[0]
+  return items.slice(0, -1).join(", ") + " and " + items[items.length - 1]
+}
+
+// What to wear, said the way a person would: "A jacket and an umbrella."
+// `swing` is the day's spread in °C; layers only matter when it's wide.
+function wearHint(feelsC, pop, uv, swing, isDay) {
+  var f = num(feelsC)
+  if (isNaN(f)) return ""
+  var items = []
+  if (f <= 0) items.push("a warm coat", "gloves")
+  else if (f <= 8) items.push("a warm coat")
+  else if (f <= 15) items.push("a jacket")
+  if (num(swing) >= 10 && f > 0) items.push("layers")
+  if (num(pop) >= 50) items.push("an umbrella")
+  if (isDay && num(uv) >= 6) items.push("sunglasses")
+  if (items.length === 0) return f >= 24 ? "T-shirt weather." : ""
+  return capital(andList(items)) + "."
+}
+
+// For the next twelve hours from now: the coldest it will feel, the best
+// chance of rain, the strongest sun, and how far the day swings.
+function wearNow(fc, lms) {
+  if (!fc || !fc.current) return ""
+  var hours = upcomingHours(fc, lms, 12)
+  var feels = num(fc.current.feels), pop = 0, uv = 0, lo = Infinity, hi = -Infinity
+  for (var i = 0; i < hours.length; i++) {
+    var h = hours[i]
+    if (!isNaN(h.feels) && h.feels < feels) feels = h.feels
+    if (!isNaN(h.pop)) pop = Math.max(pop, h.pop)
+    if (!isNaN(h.uv) && h.isDay) uv = Math.max(uv, h.uv)
+    if (!isNaN(h.temp)) { lo = Math.min(lo, h.temp); hi = Math.max(hi, h.temp) }
+  }
+  return wearHint(feels, pop, uv, hi > lo ? hi - lo : 0, true)
+}
+
+// ---------------------------------------------------------------------------
+// The next two hours, in fifteen-minute slots.
+//   { slots: [{ t, precip }], line: "Rain starts in about 20 minutes, easing by 8:40 pm." }
+
+var NOWCAST_WET = 0.1
+
+function nowcast(fc, lms, use24, noun) {
+  var out = { slots: [], line: "" }
+  if (!fc || !fc.minutely) return out
+  var slots = fc.minutely.filter(function(m) { return m.t + 15 * 60000 > lms }).slice(0, 8)
+  out.slots = slots
+  if (slots.length === 0) return out
+  var wet = function(i) { return slots[i].precip >= NOWCAST_WET }
+  var what = capital(shortNoun(noun || "rain"))
+  var firstWet = -1
+  for (var i = 0; i < slots.length; i++) if (wet(i)) { firstWet = i; break }
+  if (firstWet < 0) return out
+  var dryAfter = -1
+  for (var j = firstWet + 1; j < slots.length; j++) if (!wet(j)) { dryAfter = j; break }
+  var ending = dryAfter >= 0 ? "easing by " + clockText(slots[dryAfter].t, use24) : "lasting past " + clockText(slots[slots.length - 1].t + 15 * 60000, use24)
+  if (firstWet === 0 && slots[0].t <= lms + 60000) {
+    out.line = dryAfter >= 0 ? what + " " + ending + "." : what + " for the next two hours."
+    return out
+  }
+  var minutes = Math.max(0, Math.round((Math.max(lms, slots[firstWet].t) - lms) / 60000))
+  var when = minutes < 10 ? "any minute" : "in about " + Math.round(minutes / 5) * 5 + " minutes"
+  out.line = what + " starts " + when + ", " + ending + "."
+  return out
+}
+
+// When the fifteen-minute data sees the current spell end before the hourly
+// forecast does, it knows better.
+function nowcastEnd(fc, lms) {
+  if (!fc || !fc.minutely) return NaN
+  var slots = fc.minutely.filter(function(m) { return m.t + 15 * 60000 > lms }).slice(0, 8)
+  var sawWet = false
+  for (var i = 0; i < slots.length; i++) {
+    if (slots[i].precip >= NOWCAST_WET) sawWet = true
+    else if (sawWet) return slots[i].t
+  }
+  return NaN
+}
+
+// ---------------------------------------------------------------------------
+// Alerts, from the US National Weather Service. Elsewhere there is no
+// equivalent free feed, so Isobar says nothing rather than guessing.
+
+var ALERTS_URL = "https://api.weather.gov/alerts/active"
+var SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1 }
+
+function nwsCovers(lat, lon) {
+  var la = num(lat), lo = num(lon)
+  if (isNaN(la) || isNaN(lo)) return false
+  var boxes = [
+    [24, 50, -125, -66],      // the lower 48
+    [51, 72, -180, -129],     // Alaska
+    [18, 23, -161, -154],     // Hawaii
+    [17.5, 18.6, -67.5, -65]  // Puerto Rico
+  ]
+  return boxes.some(function(b) { return la >= b[0] && la <= b[1] && lo >= b[2] && lo <= b[3] })
+}
+
+function alertsCommand(lat, lon) {
+  var url = ALERTS_URL + "?point=" + num(lat).toFixed(4) + "," + num(lon).toFixed(4)
+  return ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "isobar (github.com/atsokolas)", "-H", "Accept: application/geo+json", url]
+}
+
+function parseAlerts(raw, nowMs) {
+  var data
+  try { data = JSON.parse(String(raw || "")) } catch (e) { return null }
+  if (!data || !data.features || typeof data.features.length !== "number") return null
+  var out = []
+  for (var i = 0; i < data.features.length; i++) {
+    var p = data.features[i] && data.features[i].properties
+    if (!p || p.status !== "Actual" || p.messageType === "Cancel") continue
+    var ends = Date.parse(p.ends || p.expires || "")
+    if (!isNaN(ends) && ends <= nowMs) continue
+    out.push({
+      id: String(p.id || p["@id"] || (p.event + p.onset)),
+      event: trim(p.event),
+      headline: trim(p.headline),
+      description: trim(String(p.description || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
+      instruction: trim(String(p.instruction || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
+      severity: String(p.severity || "Unknown"),
+      ends: isNaN(ends) ? NaN : ends,
+      onset: Date.parse(p.onset || p.effective || "")
+    })
+  }
+  out.sort(function(a, b) {
+    var r = (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0)
+    return r !== 0 ? r : (a.onset || 0) - (b.onset || 0)
+  })
+  return out
+}
+
+function activeAlerts(list, nowMs) {
+  return (list || []).filter(function(a) { return isNaN(a.ends) || a.ends > nowMs })
+}
+
+// ---------------------------------------------------------------------------
+// Golden hour: 0 most of the day, rising to 1 at sunrise and sunset and
+// fading over twenty-odd minutes either side.
+
+function goldenGlow(fc, lms) {
+  if (!fc || !fc.daily) return 0
+  var best = 0
+  for (var i = 0; i < fc.daily.length; i++) {
+    var d = fc.daily[i]
+    var marks = [d.sunrise, d.sunset]
+    for (var k = 0; k < 2; k++) {
+      if (isNaN(marks[k])) continue
+      var away = Math.abs(lms - marks[k]) / 60000
+      if (away >= 25) continue
+      var x = clamp((away - 10) / 15, 0, 1)
+      best = Math.max(best, 1 - x * x * (3 - 2 * x))
+    }
+  }
+  return best
+}
+
+// ---------------------------------------------------------------------------
+// Full moons, by their old names. The Harvest Moon is the one nearest the
+// September equinox, and the Hunter's Moon the one after it; a second full
+// moon in a calendar month is a Blue Moon.
+
+var SYNODIC_DAYS = 29.530588853
+var MOON_NAMES = ["Wolf", "Snow", "Worm", "Pink", "Flower", "Strawberry", "Buck", "Sturgeon", "Corn", "Hunter's", "Beaver", "Cold"]
+
+function nearestFullMoon(utcMs) {
+  var ref = Date.UTC(2000, 0, 6, 18, 14)
+  var k = Math.round(((utcMs - ref) / DAY_MS - SYNODIC_DAYS / 2) / SYNODIC_DAYS)
+  return ref + (k + 0.5) * SYNODIC_DAYS * DAY_MS
+}
+
+function fullMoonName(fullMs) {
+  var d = new Date(fullMs)
+  var harvest = nearestFullMoon(Date.UTC(d.getUTCFullYear(), 8, 22, 12))
+  var cycle = SYNODIC_DAYS * DAY_MS
+  if (Math.abs(fullMs - harvest) < DAY_MS) return "Harvest Moon"
+  if (Math.abs(fullMs - harvest - cycle) < DAY_MS) return "Hunter's Moon"
+  if (new Date(fullMs - cycle).getUTCMonth() === d.getUTCMonth()) return "Blue Moon"
+  return MOON_NAMES[d.getUTCMonth()] + " Moon"
+}
+
+// The full moon's name on the night of it, else "".
+function fullMoonTonight(utcMs) {
+  var full = nearestFullMoon(utcMs)
+  return Math.abs(utcMs - full) <= 20 * HOUR_MS ? fullMoonName(full) : ""
+}
+
+// ---------------------------------------------------------------------------
+// Firsts of the season. Each kind remembers the last day it happened; when it
+// happens again after a long enough gap, that's a first worth a quiet word.
+// A kind seen for the first time ever is only remembered — Isobar can't know
+// it's a first without a history.
+
+var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+function daysBetween(a, b) { return Math.round((localMs(b) - localMs(a)) / DAY_MS) }
+
+function seasonFirsts(fc, lms, state, imperial, placeName, use24) {
+  var seen = {}
+  var prev = (state && state.seen) || {}
+  for (var s in prev) seen[s] = prev[s]
+  var events = []
+  if (!fc || !fc.current) return { events: events, seen: seen }
+  var today = dateKey(lms)
+  var td = dayIndex(fc, today) >= 0 ? fc.daily[dayIndex(fc, today)] : null
+  var ahead = upcomingHours(fc, lms, 24)
+  var where = placeName ? " in " + placeName : ""
+
+  var warmC = imperial ? (70 - 32) * 5 / 9 : 20
+  var hotC = imperial ? (90 - 32) * 5 / 9 : 30
+  var warmLabel = imperial ? "70°" : "20°"
+  var hotLabel = imperial ? "90°" : "30°"
+
+  var frostHour = null
+  for (var i = 0; i < Math.min(ahead.length, 18); i++) if (ahead[i].temp <= 0) { frostHour = ahead[i]; break }
+  var snowHour = null
+  for (var j = 0; j < ahead.length; j++) {
+    var k = condition(ahead[j].code).kind
+    if (k === "snow" && (isNaN(ahead[j].pop) || ahead[j].pop >= 40)) { snowHour = ahead[j]; break }
+  }
+
+  var checks = [
+    { kind: "warm", gap: 60, holds: td && td.max >= warmC,
+      title: function(last) { return "First " + warmLabel + " day since " + MONTHS[new Date(localMs(last)).getUTCMonth()] },
+      body: function() { return "Up to " + tempText(td.max, imperial) + where + " today." } },
+    { kind: "hot", gap: 120, holds: td && td.max >= hotC,
+      title: function() { return "First " + hotLabel + " day of the year" },
+      body: function() { return "Up to " + tempText(td.max, imperial) + where + " today." } },
+    { kind: "frost", gap: 120, holds: !!frostHour,
+      title: function() { return "First frost tonight" },
+      body: function() { return "Down to " + tempText(frostHour.temp, imperial) + " by " + spokenHour(frostHour.t, use24) + ". Bring the plants in." } },
+    { kind: "freeze", gap: 120, holds: td && td.max < 0,
+      title: function() { return "First day below freezing" },
+      body: function() { return "It won't get above " + tempText(td.max, imperial) + where + " today." } },
+    { kind: "snow", gap: 120, holds: !!snowHour,
+      title: function() { return "First snow of the season" },
+      body: function() { return capital(condition(snowHour.code).noun || "snow") + " from around " + spokenHour(snowHour.t, use24) + "." } }
+  ]
+
+  for (var c = 0; c < checks.length; c++) {
+    var ch = checks[c]
+    if (!ch.holds) continue
+    var last = seen[ch.kind]
+    if (last && last !== today && daysBetween(last, today) >= ch.gap)
+      events.push({ kind: ch.kind, title: ch.title(last), body: ch.body() })
+    seen[ch.kind] = today
+  }
+  return { events: events, seen: seen }
+}
+
+// ---------------------------------------------------------------------------
+// Notes from your places: something you'd mention if you were there.
+// Routine rain isn't news; snow, storms, real heat and real cold are.
+
+function placeNote(fc, lms, imperial, name, alerts, nowMs) {
+  if (!fc || !fc.current) return null
+  var where = name || "there"
+  var live = activeAlerts(alerts, num(nowMs) || 0)
+  if (live.length > 0) return { kind: "alert", text: where + " is under a " + live[0].event }
+  var k = condition(fc.current.code).kind
+  if (k === "snow") return { kind: "snow", text: "It's snowing in " + where }
+  if (k === "storm") return { kind: "storm", text: "Thunderstorms over " + where }
+  var t = fc.current.temp
+  if (t >= 35) return { kind: "heat", text: "It's " + tempText(t, imperial) + " in " + where }
+  if (t <= -15) return { kind: "cold", text: "It's " + tempText(t, imperial) + " in " + where }
+  return null
+}
+
+function noteKey(placeKey, note, lms) {
+  return note ? placeKey + "|" + note.kind + "|" + dateKey(lms) : ""
+}
+
+// Drops remembered notes and alerts once they're old news.
+function pruneState(state, nowMs) {
+  var out = { seen: {}, notes: {}, alerts: {} }
+  var s = state || {}
+  var k
+  for (k in (s.seen || {})) out.seen[k] = s.seen[k]
+  for (k in (s.notes || {})) if (nowMs - num(s.notes[k]) < 3 * DAY_MS) out.notes[k] = s.notes[k]
+  for (k in (s.alerts || {})) if (nowMs - num(s.alerts[k]) < 7 * DAY_MS) out.alerts[k] = s.alerts[k]
+  return out
+}
+
+function parseState(raw) {
+  try {
+    var d = JSON.parse(String(raw || ""))
+    return d && typeof d === "object" ? pruneState(d, Date.now()) : pruneState(null, 0)
+  } catch (e) {
+    return pruneState(null, 0)
+  }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     APP_NAME: APP_NAME, HOUR_MS: HOUR_MS, DAY_MS: DAY_MS, MAX_BAR_PLACES: MAX_BAR_PLACES,
@@ -1193,6 +1531,11 @@ if (typeof module !== "undefined") {
     tooltipText: tooltipText, copyPayload: copyPayload, copyCommand: copyCommand, radarCommand: radarCommand,
     toastCommand: toastCommand, saveLocationCommand: saveLocationCommand, rainKey: rainKey,
     MAX_PLACES: MAX_PLACES, placeKey: placeKey, normalizePlaces: normalizePlaces, storedPlace: storedPlace,
-    addPlace: addPlace, removePlace: removePlace, offsetText: offsetText, compareLine: compareLine
+    addPlace: addPlace, removePlace: removePlace, offsetText: offsetText, compareLine: compareLine,
+    sinceYesterday: sinceYesterday, dewPoint: dewPoint, comfortWord: comfortWord, wearHint: wearHint, wearNow: wearNow,
+    nowcast: nowcast, nowcastEnd: nowcastEnd, nwsCovers: nwsCovers, alertsCommand: alertsCommand,
+    parseAlerts: parseAlerts, activeAlerts: activeAlerts, goldenGlow: goldenGlow,
+    nearestFullMoon: nearestFullMoon, fullMoonName: fullMoonName, fullMoonTonight: fullMoonTonight,
+    seasonFirsts: seasonFirsts, placeNote: placeNote, noteKey: noteKey, pruneState: pruneState, parseState: parseState,
   }
 }

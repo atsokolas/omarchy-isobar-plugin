@@ -412,7 +412,11 @@ test("an hour is named the way you'd say it", () => {
 test("an hour's readings leave out what the forecast doesn't carry", () => {
   const full = { t: 0, feels: 8, pop: 40, precip: 0.4, wind: 20, windDir: 315, gusts: 45, humidity: 81, uv: 3.2, isDay: true }
   const rows = Model.hourDetails(full, false)
-  assert.deepEqual(rows.map(r => r.label), ["Feels like", "Rain", "Wind", "Humidity", "UV"])
+  assert.deepEqual(rows.map(r => r.label), ["Feels like", "Rain", "Wind", "Humidity", "UV", "Wear"])
+  assert.equal(rows[5].value, "A warm coat")
+  const muggy = Model.hourDetails({ t: 0, temp: 27, feels: 29, pop: 10, humidity: 60, isDay: true, uv: 7 }, false)
+  assert.equal(muggy.find(r => r.label === "Air").value, "Muggy")
+  assert.equal(muggy.find(r => r.label === "Wear").value, "Sunglasses")
   assert.equal(rows[1].value, "40%  ·  0.4 mm")
   assert.equal(rows[2].value, "20 km/h NW, gusts 45")
   assert.equal(rows[3].value, "81%")
@@ -434,4 +438,194 @@ test("the strip is drawn to each hour and comes to rest on one", () => {
   assert.equal(Model.restIndex(-2, 0, 10), 0)
   assert.equal(Model.restIndex(40, 0, 10), 9)
   assert.equal(Model.restIndex(1, 0, 0), 0)
+})
+
+// ---- Since yesterday, comfort, nowcast ----------------------------------
+
+function withYesterday(nowTemp, thenTemp) {
+  const start = Date.UTC(2026, 9, 14, 0, 0)
+  const time = [], temps = []
+  for (let i = 0; i < 72; i++) { time.push(new Date(start + i * 3600000).toISOString().slice(0, 16)); temps.push(i === 14 ? thenTemp : 10) }
+  return Model.parseForecast(JSON.stringify({
+    utc_offset_seconds: 0,
+    current: { time: "2026-10-15T14:00", temperature_2m: nowTemp, weather_code: 3, is_day: 1 },
+    hourly: { time, temperature_2m: temps, weather_code: time.map(() => 3), is_day: time.map(() => 1) },
+    daily: { time: ["2026-10-14", "2026-10-15"], temperature_2m_max: [14, 14], temperature_2m_min: [5, 5], sunrise: ["2026-10-14T07:04", "2026-10-15T07:05"], sunset: ["2026-10-14T18:10", "2026-10-15T18:08"] }
+  }), 0)
+}
+
+test("this time yesterday, said only when it's noticeable", () => {
+  assert.equal(Model.sinceYesterday(withYesterday(8, 13), AT_2PM, false), -5)
+  assert.match(Model.secondSentence(withYesterday(8, 12.5), AT_2PM, true), /^8° colder than this time yesterday/)
+  assert.match(Model.secondSentence(withYesterday(15, 11), AT_2PM, false), /^4° warmer than this time yesterday/)
+  assert.doesNotMatch(Model.secondSentence(withYesterday(12, 11), AT_2PM, false), /yesterday/)
+  assert.ok(isNaN(Model.sinceYesterday(synthetic([3]), AT_2PM, false)), "no hours from yesterday: the highs stand in")
+})
+
+test("dew point reads as how the air feels", () => {
+  assert.ok(Math.abs(Model.dewPoint(20, 50) - 9.3) < 0.2)
+  assert.ok(isNaN(Model.dewPoint(20, NaN)))
+  assert.equal(Model.comfortWord(5, 18), "Dry")
+  assert.equal(Model.comfortWord(13, 22), "Comfortable")
+  assert.equal(Model.comfortWord(17, 25), "Sticky")
+  assert.equal(Model.comfortWord(19.5, 27), "Muggy")
+  assert.equal(Model.comfortWord(23, 31), "Oppressive")
+  assert.equal(Model.comfortWord(-4, 3), "Crisp")
+  assert.equal(Model.comfortWord(6, 8), "Damp")
+  assert.equal(Model.comfortWord(NaN, 8), "")
+})
+
+test("what to wear, the way a person would say it", () => {
+  assert.equal(Model.wearHint(-3, 0, 0, 4, false), "A warm coat and gloves.")
+  assert.equal(Model.wearHint(12, 70, 2, 12, true), "A jacket, layers and an umbrella.")
+  assert.equal(Model.wearHint(20, 10, 7, 4, true), "Sunglasses.")
+  assert.equal(Model.wearHint(20, 10, 7, 4, false), "")
+  assert.equal(Model.wearHint(27, 0, 3, 4, true), "T-shirt weather.")
+  assert.equal(Model.wearHint(NaN, 0, 0, 0, true), "")
+})
+
+function withMinutely(times, precip, current) {
+  return synthetic(Array(72).fill(3), { current: current === undefined ? 3 : current, precip: current === 61 ? 0.4 : 0, minutely: { time: times, precipitation: precip } })
+}
+const Q = ["2026-10-15T14:00", "2026-10-15T14:15", "2026-10-15T14:30", "2026-10-15T14:45", "2026-10-15T15:00", "2026-10-15T15:15", "2026-10-15T15:30", "2026-10-15T15:45"]
+
+test("the nowcast says when rain starts and when it eases", () => {
+  const due = withMinutely(Q, [0, 0, 0.3, 0.6, 0.4, 0, 0, 0])
+  assert.equal(Model.nowcast(due, AT_2PM, false, "rain").line, "Rain starts in about 25 minutes, easing by 3:15 pm.")
+  const falling = withMinutely(Q, [0.5, 0.4, 0.2, 0, 0, 0, 0, 0], 61)
+  assert.equal(Model.nowcast(falling, AT_2PM, false, "rain").line, "Rain easing by 2:45 pm.")
+  const steady = withMinutely(Q, Q.map(() => 0.5), 61)
+  assert.equal(Model.nowcast(steady, AT_2PM, true, "snow").line, "Snow for the next two hours.")
+  const late = withMinutely(Q, [0, 0, 0, 0, 0, 0, 0.2, 0.3])
+  assert.equal(Model.nowcast(late, AT_2PM, false, "drizzle").line, "Drizzle starts in about 85 minutes, lasting past 4:00 pm.")
+  assert.equal(Model.nowcast(withMinutely(Q, Q.map(() => 0)), AT_2PM, false).line, "")
+  assert.deepEqual(Model.nowcast(synthetic([3]), AT_2PM, false).slots, [])
+})
+
+test("the nowcast sharpens when a spell of rain ends", () => {
+  const fc = synthetic(Array(72).fill(61), { current: 61, precip: 0.4, minutely: { time: Q, precipitation: [0.5, 0.4, 0, 0, 0, 0, 0, 0] } })
+  const out = Model.precipOutlook(fc, AT_2PM)
+  assert.equal(out.state, "now")
+  assert.equal(Model.clockText(out.endMs, false), "2:30 pm")
+  assert.equal(Model.barHint(out, false), "Rain til 2pm")
+})
+
+// ---- Alerts --------------------------------------------------------------
+
+test("the weather service covers the US and nowhere else", () => {
+  assert.ok(Model.nwsCovers(46.79, -92.1))   // Duluth
+  assert.ok(Model.nwsCovers(61.2, -149.9))   // Anchorage
+  assert.ok(Model.nwsCovers(21.3, -157.8))   // Honolulu
+  assert.ok(!Model.nwsCovers(35.69, 139.69)) // Tokyo
+  assert.ok(!Model.nwsCovers(38.72, -9.14))  // Lisbon
+  assert.ok(!Model.nwsCovers(NaN, 0))
+  const cmd = Model.alertsCommand(46.78672, -92.10049)
+  assert.equal(cmd[cmd.length - 1], "https://api.weather.gov/alerts/active?point=46.7867,-92.1005")
+  assert.ok(cmd.includes("isobar (github.com/atsokolas)"))
+})
+
+test("alerts are read, ranked and expired", () => {
+  const now = Date.UTC(2026, 9, 15, 14)
+  const feature = (p) => ({ properties: Object.assign({ status: "Actual", messageType: "Alert" }, p) })
+  const raw = JSON.stringify({ features: [
+    feature({ id: "a", event: "Wind Advisory", severity: "Moderate", headline: "Wind Advisory until 7 PM", description: "West winds 25 to 35 mph\nwith gusts to 50.\n\nDowned limbs.", ends: "2026-10-15T19:00:00-05:00" }),
+    feature({ id: "b", event: "Tornado Warning", severity: "Extreme", expires: "2026-10-15T15:00:00Z" }),
+    feature({ id: "c", event: "Frost Advisory", severity: "Minor", ends: "2026-10-15T13:00:00Z" }),
+    feature({ id: "d", event: "Test Message", status: "Test" }),
+    feature({ id: "e", event: "Wind Advisory", messageType: "Cancel" })
+  ] })
+  const alerts = Model.parseAlerts(raw, now)
+  assert.deepEqual(alerts.map(a => a.id), ["b", "a"])
+  assert.equal(alerts[1].description, "West winds 25 to 35 mph with gusts to 50.\n\nDowned limbs.")
+  assert.deepEqual(Model.activeAlerts(alerts, Date.UTC(2026, 9, 15, 16)).map(a => a.id), ["a"])
+  assert.equal(Model.parseAlerts("nope", now), null)
+  assert.deepEqual(Model.parseAlerts(JSON.stringify({ features: [] }), now), [])
+})
+
+// ---- Delights ------------------------------------------------------------
+
+test("golden hour glows around sunrise and sunset, and only then", () => {
+  const fc = synthetic([3])
+  const sunset = Date.UTC(2026, 9, 15, 18, 8)
+  assert.equal(Model.goldenGlow(fc, sunset), 1)
+  assert.equal(Model.goldenGlow(fc, sunset - 8 * 60000), 1)
+  const fading = Model.goldenGlow(fc, sunset + 18 * 60000)
+  assert.ok(fading > 0 && fading < 1)
+  assert.equal(Model.goldenGlow(fc, sunset + 40 * 60000), 0)
+  assert.equal(Model.goldenGlow(fc, AT_2PM), 0)
+  assert.equal(Model.goldenGlow(null, AT_2PM), 0)
+})
+
+test("full moons go by their old names", () => {
+  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 9, 26, 4)), "Hunter's Moon")
+  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 8, 26, 16)), "Harvest Moon")
+  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 0, 3, 10)), "Wolf Moon")
+  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 4, 31, 8)), "Blue Moon")
+  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 9, 15, 12)), "")
+  // Every full moon has a name, and a year has twelve or thirteen of them.
+  let n = 0
+  for (let t = Date.UTC(2026, 0, 1); t < Date.UTC(2027, 0, 1); t += 3600000) {
+    const name = Model.fullMoonTonight(t)
+    if (name && !Model.fullMoonTonight(t - 3600000)) { n++; assert.match(name, / Moon$/) }
+  }
+  assert.ok(n === 12 || n === 13, n)
+})
+
+function dayOf(max, min, codes, opts) {
+  opts = opts || {}
+  const start = Date.UTC(2026, 9, 15, 0)
+  const time = []
+  for (let i = 0; i < 48; i++) time.push(new Date(start + i * 3600000).toISOString().slice(0, 16))
+  const temps = time.map((_, i) => i < 24 ? min + (max - min) * Math.sin(Math.PI * Math.max(0, i - 6) / 16) : (opts.night === undefined ? min : opts.night))
+  return Model.parseForecast(JSON.stringify({
+    utc_offset_seconds: 0,
+    current: { time: "2026-10-15T14:00", temperature_2m: max, weather_code: 3, is_day: 1 },
+    hourly: { time, temperature_2m: temps, weather_code: time.map((_, i) => codes ? codes(i) : 3), is_day: time.map(() => 1), precipitation_probability: time.map(() => 80) },
+    daily: { time: ["2026-10-15", "2026-10-16"], temperature_2m_max: [max, max], temperature_2m_min: [min, min], sunrise: ["2026-10-15T07:05", "2026-10-16T07:06"], sunset: ["2026-10-15T18:08", "2026-10-16T18:06"] }
+  }), 0)
+}
+
+test("a first of the season is announced once, after a long gap", () => {
+  const warm = dayOf(23, 12)
+  const fresh = Model.seasonFirsts(warm, AT_2PM, { seen: {} }, true, "Duluth", false)
+  assert.deepEqual(fresh.events, [], "no history: remember it, say nothing")
+  assert.equal(fresh.seen.warm, "2026-10-15")
+  const after = Model.seasonFirsts(warm, AT_2PM, { seen: { warm: "2026-05-20" } }, true, "Duluth", false)
+  assert.deepEqual(after.events.map(e => e.title), ["First 70° day since May"])
+  assert.equal(after.events[0].body, "Up to 73° in Duluth today.")
+  assert.deepEqual(Model.seasonFirsts(warm, AT_2PM, after, true, "Duluth", false).events, [], "once")
+  assert.deepEqual(Model.seasonFirsts(warm, AT_2PM, { seen: { warm: "2026-09-30" } }, true, "", false).events, [], "too recent")
+
+  const frost = dayOf(8, 2, null, { night: -2 })
+  const f = Model.seasonFirsts(frost, AT_2PM, { seen: { frost: "2026-04-02" } }, false, "", false)
+  assert.equal(f.events[0].title, "First frost tonight")
+  assert.match(f.events[0].body, /^Down to −2° by midnight\. Bring the plants in\.$/)
+
+  const snow = dayOf(1, -3, i => i >= 20 ? 73 : 3)
+  assert.equal(Model.seasonFirsts(snow, AT_2PM, { seen: { snow: "2026-03-01" } }, false, "", false).events.find(e => e.kind === "snow").title, "First snow of the season")
+})
+
+test("a place earns a note for snow, storms and extremes, not routine rain", () => {
+  const at = (code, temp) => Model.parseForecast(JSON.stringify({
+    current: { time: "2026-10-15T14:00", temperature_2m: temp, weather_code: code, is_day: 1 },
+    hourly: { time: ["2026-10-15T14:00"], temperature_2m: [temp] }, daily: { time: ["2026-10-15"] }
+  }), 0)
+  assert.equal(Model.placeNote(at(73, -2), AT_2PM, false, "Tokyo").text, "It's snowing in Tokyo")
+  assert.equal(Model.placeNote(at(95, 20), AT_2PM, false, "Lisbon").text, "Thunderstorms over Lisbon")
+  assert.equal(Model.placeNote(at(0, 41), AT_2PM, true, "Phoenix").text, "It's 106° in Phoenix")
+  assert.equal(Model.placeNote(at(0, -31), AT_2PM, false, "Yakutsk").text, "It's −31° in Yakutsk")
+  assert.equal(Model.placeNote(at(63, 12), AT_2PM, false, "Tokyo"), null)
+  const alert = [{ id: "x", event: "Heat Advisory", ends: NaN }]
+  assert.equal(Model.placeNote(at(0, 30), AT_2PM, false, "Austin", alert, 0).text, "Austin is under a Heat Advisory")
+  const note = Model.placeNote(at(73, -2), AT_2PM, false, "Tokyo")
+  assert.equal(Model.noteKey("35.690,139.692", note, AT_2PM), "35.690,139.692|snow|2026-10-15")
+})
+
+test("remembered notes and alerts age out", () => {
+  const now = Date.UTC(2026, 9, 15)
+  const s = Model.pruneState({ seen: { warm: "2026-05-01" }, notes: { a: now - 3600000, b: now - 5 * 86400000 }, alerts: { x: now - 86400000, y: now - 9 * 86400000 } }, now)
+  assert.deepEqual(Object.keys(s.notes), ["a"])
+  assert.deepEqual(Object.keys(s.alerts), ["x"])
+  assert.equal(s.seen.warm, "2026-05-01")
+  assert.deepEqual(Model.parseState("garbage"), { seen: {}, notes: {}, alerts: {} })
 })
