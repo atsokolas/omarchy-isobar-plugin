@@ -1252,7 +1252,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "scroll or ← →  an hour   ·   ↑ ↓  a day   ·   t  now" + (root.service.places.length > 0 ? "   ·   [ ]  places" : "") + "   ·   h  overview"
+          text: "scroll or ← →  an hour  ·  ↑ ↓  a day  ·  t  now" + (root.service.places.length > 0 ? "  ·  [ ]  places" : "") + "  ·  h  overview"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1516,7 +1516,7 @@ Panel {
 
           Text {
             Layout.fillWidth: true
-            text: "↑ ↓ choose   ·   Return open   ·   b bar   ·   a add   ·   x remove   ·   [ ] step through places"
+            text: "↑ ↓ choose  ·  Return open  ·  b bar  ·  a add  ·  x remove  ·  [ ] step through"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
