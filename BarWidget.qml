@@ -184,6 +184,7 @@ BarWidget {
 
       Text {
         id: tempText
+        textFormat: Text.PlainText
         visible: text !== ""
         x: root.vertical ? (parent.width - width) / 2 : icon.x + icon.width + content.gap
         y: root.vertical ? icon.y + icon.height + Style.spaceReal(2) : (parent.height - height) / 2
@@ -198,6 +199,7 @@ BarWidget {
       // Only when it's coming. A dry day keeps the bar quiet.
       Text {
         id: hintText
+        textFormat: Text.PlainText
         visible: content.hintVisible
         x: tempText.x + tempText.width + content.gap
         anchors.verticalCenter: parent.verticalCenter
@@ -232,6 +234,7 @@ BarWidget {
 
             Text {
               id: placeName
+              textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
               text: Model.barName(barPlace.modelData.name)
               color: Qt.rgba(button.foreground.r, button.foreground.g, button.foreground.b, 0.62)
@@ -258,6 +261,7 @@ BarWidget {
 
             Text {
               id: placeTemp
+              textFormat: Text.PlainText
               x: placeIcon.x + placeIcon.width + content.gap
               anchors.verticalCenter: parent.verticalCenter
               text: barPlace.cur ? Model.tempText(barPlace.cur.temp, root.service.imperial) : "—"

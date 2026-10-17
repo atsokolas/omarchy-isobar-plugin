@@ -219,6 +219,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         anchors.horizontalCenter: parent.horizontalCenter
         y: root.labelTop
         text: hour ? Model.tempText(hour.temp, root.imperial) : ""
@@ -231,6 +232,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         text: hour ? (index === 0 && root.startsNow ? "Now" : Model.hourText(hour.t, root.use24)) : ""

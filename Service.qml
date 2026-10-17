@@ -144,7 +144,7 @@ Item {
     var p = placeFor(_placeQueue[0])
     placeProcess.key = p.key
     placeProcess.out = ""
-    placeProcess.command = Model.curl(Model.forecastQuery(p.latitude, p.longitude), 10)
+    placeProcess.command = Model.curl(Model.forecastQuery(p.latitude, p.longitude), 10, Model.MAX_BYTES.forecast)
     placeProcess.running = true
   }
 
@@ -220,11 +220,11 @@ Item {
     loading = true
     _fetchingKey = locationKey
     _forecastOut = ""
-    forecastProcess.command = Model.curl(Model.forecastQuery(location.latitude, location.longitude), 10)
+    forecastProcess.command = Model.curl(Model.forecastQuery(location.latitude, location.longitude), 10, Model.MAX_BYTES.forecast)
     forecastProcess.running = true
     if (!airProcess.running) {
       _airOut = ""
-      airProcess.command = Model.curl(Model.airQuery(location.latitude, location.longitude), 8)
+      airProcess.command = Model.curl(Model.airQuery(location.latitude, location.longitude), 8, Model.MAX_BYTES.air)
       airProcess.running = true
     }
   }
@@ -291,7 +291,7 @@ Item {
   function lookUpName() {
     if (!active || nameLookup.running || Model.trim(configured.name) === "") return
     nameLookup.out = ""
-    nameLookup.command = Model.curl(Model.geocodeQuery(configured.name), 6)
+    nameLookup.command = Model.curl(Model.geocodeQuery(configured.name), 6, Model.MAX_BYTES.geocode)
     nameLookup.running = true
   }
 
@@ -534,7 +534,7 @@ Item {
 
   Process {
     id: ipProcess
-    command: Model.curl("https://ipinfo.io/json", 6)
+    command: Model.curl(Model.IP_URL, 6, Model.MAX_BYTES.ip)
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root._ipOut = text

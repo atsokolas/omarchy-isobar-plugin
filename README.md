@@ -124,13 +124,14 @@ Isobar has no account, no key and no telemetry. To fetch a forecast it has to sa
 - **ipinfo.io** sees your IP address, and only when you haven't set a location; it answers with roughly where that is.
 - **windy.com** opens in your browser with the coordinates, when you ask for the radar (`o`).
 
-Every request is a plain `curl` with an `omarchy-isobar` user agent. Nothing else leaves the machine. Isobar writes its cache under `~/.cache/omarchy/isobar/`, a small memory of firsts and notes it has already mentioned in `~/.local/state/omarchy/isobar/state.json`, the shared location file when you change location, and its own `shell.json` entry when you change a setting.
+Every request is a plain `curl` over https only, with an `omarchy-isobar` user agent, a timeout and a size ceiling: an answer more than about fifty times larger than a real one is dropped before it is read. Names, alerts and anything else a server sends are drawn as plain text, never as markup. Nothing else leaves the machine. Isobar writes its cache under `~/.cache/omarchy/isobar/`, a small memory of firsts and notes it has already mentioned in `~/.local/state/omarchy/isobar/state.json`, the shared location file when you change location, and its own `shell.json` entry when you change a setting.
 
 ## Requirements
 
 - Omarchy Quattro (Quickshell plugin support)
-- `curl`
+- `curl` and `bash`, for the fetches
 - `wl-copy` to copy the forecast
+- `xdg-open` to open the radar
 
 ## Tests
 

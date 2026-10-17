@@ -49,6 +49,17 @@ function num(v) {
 
 function trim(s) { return String(s === undefined || s === null ? "" : s).replace(/^\s+|\s+$/g, "") }
 
+// Words from a server: no control characters, and no longer than the place
+// they're shown needs. The QML also draws them as plain text, never markup.
+function clip(s, max) {
+  var t = trim(String(s === undefined || s === null ? "" : s).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " "))
+  return t.length > max ? t.slice(0, max - 1).replace(/\s+$/, "") + "…" : t
+}
+
+function onEarth(lat, lon) {
+  return !isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
+}
+
 function boolSetting(value, fallback) {
   if (value === true || value === false) return value
   var s = trim(value).toLowerCase()
@@ -100,11 +111,11 @@ function parseIpInfo(raw) {
     var data = JSON.parse(String(raw || ""))
     var parts = String(data.loc || "").split(",")
     var lat = num(parts[0]), lon = num(parts[1])
-    if (isNaN(lat) || isNaN(lon)) return null
+    if (!onEarth(lat, lon)) return null
     return {
-      name: trim(data.city) || trim(data.region) || "Here",
-      region: trim(data.region),
-      country: trim(data.country).toUpperCase(),
+      name: clip(data.city, 80) || clip(data.region, 80) || "Here",
+      region: clip(data.region, 80),
+      country: clip(data.country, 3).toUpperCase(),
       latitude: lat,
       longitude: lon
     }
@@ -118,13 +129,13 @@ function parseGeocodingResults(raw) {
     var data = JSON.parse(String(raw || "{}"))
     var results = data.results || []
     var out = []
-    for (var i = 0; i < results.length; i++) {
+    for (var i = 0; i < results.length && out.length < 10; i++) {
       var r = results[i]
-      if (!r || !r.name || isNaN(num(r.latitude)) || isNaN(num(r.longitude))) continue
+      if (!r || !clip(r.name, 80) || !onEarth(num(r.latitude), num(r.longitude))) continue
       out.push({
-        name: String(r.name),
-        description: [r.admin1, r.country].filter(function(p) { return !!p }).join(", "),
-        country: trim(r.country_code).toUpperCase(),
+        name: clip(r.name, 80),
+        description: [clip(r.admin1, 80), clip(r.country, 80)].filter(function(p) { return !!p }).join(", "),
+        country: clip(r.country_code, 3).toUpperCase(),
         latitude: num(r.latitude),
         longitude: num(r.longitude)
       })
@@ -353,10 +364,34 @@ function geocodeQuery(text) {
   return GEOCODE_URL + "?name=" + encodeURIComponent(trim(text)) + "&count=6&language=en&format=json"
 }
 
-var USER_AGENT = "omarchy-isobar/1.1 (github.com/atsokolas/omarchy-isobar-plugin)"
+var USER_AGENT = "omarchy-isobar/1.1.1 (github.com/atsokolas/omarchy-isobar-plugin)"
 
-function curl(url, seconds) {
-  return ["curl", "-fsS", "--compressed", "--max-time", String(seconds || 8), "-A", USER_AGENT, url]
+// Every answer has a ceiling, about fifty times the size of a real one, so a
+// wrong or hostile server can't fill the shell's memory. --max-filesize stops
+// a declared length at the door; head stops a chunked or compressed one that
+// grows past it on the way, and anything over the ceiling counts as a failure.
+var MAX_BYTES = {
+  forecast: 1024 * 1024,      // a week of hours runs about 17 KB
+  air: 64 * 1024,             // a few hundred bytes
+  geocode: 256 * 1024,        // six places, about 3 KB
+  ip: 64 * 1024,              // a few hundred bytes
+  alerts: 2 * 1024 * 1024     // a busy point's warnings, tens of KB
+}
+
+var FETCH_SCRIPT = 'set -o pipefail; max=$1; shift; t=$(mktemp) || exit 1; trap \'rm -f "$t"\' EXIT; '
+  + 'curl --max-filesize "$max" "$@" | head -c "$((max + 1))" > "$t" || exit 1; '
+  + '[ "$(wc -c < "$t")" -le "$max" ] || { echo "response over $max bytes" >&2; exit 3; }; cat "$t"'
+
+function curl(url, seconds, maxBytes, headers) {
+  url = String(url || "")
+  if (!/^https:\/\/[^\s]+$/.test(url)) return ["false"]
+  var max = Math.floor(num(maxBytes) > 0 ? num(maxBytes) : MAX_BYTES.forecast)
+  var cmd = ["bash", "-c", FETCH_SCRIPT, "isobar-fetch", String(max),
+    "-fsS", "--compressed", "--proto", "=https", "--proto-redir", "=https",
+    "--max-time", String(seconds || 8), "-A", USER_AGENT]
+  for (var i = 0; headers && i < headers.length; i++) cmd.push("-H", String(headers[i]))
+  cmd.push("--", url)
+  return cmd
 }
 
 function column(block, key, i) {
@@ -1357,7 +1392,7 @@ function nwsCovers(lat, lon) {
 
 function alertsCommand(lat, lon) {
   var url = ALERTS_URL + "?point=" + num(lat).toFixed(4) + "," + num(lon).toFixed(4)
-  return ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", USER_AGENT, "-H", "Accept: application/geo+json", url]
+  return curl(url, 8, MAX_BYTES.alerts, ["Accept: application/geo+json"])
 }
 
 function parseAlerts(raw, nowMs) {
@@ -1365,20 +1400,20 @@ function parseAlerts(raw, nowMs) {
   try { data = JSON.parse(String(raw || "")) } catch (e) { return null }
   if (!data || !data.features || typeof data.features.length !== "number") return null
   var out = []
-  for (var i = 0; i < data.features.length; i++) {
+  for (var i = 0; i < data.features.length && out.length < 20; i++) {
     var p = data.features[i] && data.features[i].properties
     if (!p || p.status !== "Actual" || p.messageType === "Cancel") continue
     var ends = Date.parse(p.ends || p.expires || "")
     if (!isNaN(ends) && ends <= nowMs) continue
     out.push({
-      id: String(p.id || p["@id"] || (p.event + p.onset)),
-      event: trim(p.event),
-      headline: trim(p.headline),
-      description: trim(String(p.description || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
-      instruction: trim(String(p.instruction || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " ")),
-      severity: String(p.severity || "Unknown"),
+      id: clip(p.id || p["@id"] || (p.event + p.onset), 200),
+      event: clip(p.event, 120),
+      headline: clip(p.headline, 400),
+      description: clip(String(p.description || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " "), 6000),
+      instruction: clip(String(p.instruction || "").replace(/([^\n])\n(?!\n)/g, "$1 ").replace(/ +/g, " "), 3000),
+      severity: SEVERITY_RANK[p.severity] ? String(p.severity) : "Unknown",
       // An update to an alert is a new message naming the ones it replaces.
-      refs: (p.references || []).map(function(r) { return r && String(r.identifier || r["@id"] || "") }).filter(function(r) { return !!r }),
+      refs: (Array.isArray(p.references) ? p.references.slice(0, 20) : []).map(function(r) { return r && String(r.identifier || r["@id"] || "") }).filter(function(r) { return !!r }),
       ends: isNaN(ends) ? NaN : ends,
       onset: Date.parse(p.onset || p.effective || "")
     })
@@ -1592,7 +1627,7 @@ if (typeof module !== "undefined") {
     MAX_PLACES: MAX_PLACES, placeKey: placeKey, normalizePlaces: normalizePlaces, storedPlace: storedPlace,
     addPlace: addPlace, removePlace: removePlace, offsetText: offsetText, compareLine: compareLine,
     sinceYesterday: sinceYesterday, dewPoint: dewPoint, comfortWord: comfortWord, wearHint: wearHint, wearNow: wearNow,
-    nowcast: nowcast, nowcastEnd: nowcastEnd, nwsCovers: nwsCovers, alertsCommand: alertsCommand,
+    nowcast: nowcast, nowcastEnd: nowcastEnd, nwsCovers: nwsCovers, alertsCommand: alertsCommand, clip: clip, onEarth: onEarth, MAX_BYTES: MAX_BYTES, IP_URL: IP_URL,
     parseAlerts: parseAlerts, activeAlerts: activeAlerts, freshAlerts: freshAlerts, dewLine: dewLine, USER_AGENT: USER_AGENT, goldenGlow: goldenGlow,
     nearestFullMoon: nearestFullMoon, fullMoonName: fullMoonName, fullMoonTonight: fullMoonTonight,
     seasonFirsts: seasonFirsts, placeNote: placeNote, noteKey: noteKey, pruneState: pruneState, parseState: parseState,

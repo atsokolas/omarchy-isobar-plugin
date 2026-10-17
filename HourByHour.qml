@@ -133,6 +133,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         Text {
           id: heroDegrees
+          textFormat: Text.PlainText
           text: root.hour ? Model.signed(Model.temp(root.hour.temp, root.imperial)) : "—"
           color: root.foreground
           font.family: root.fontFamily
@@ -141,6 +142,7 @@ Item {
           font.features: { "tnum": 1 }
         }
         Text {
+          textFormat: Text.PlainText
           text: "°"
           color: root.hour ? Model.tempColor(root.hour.temp, root.palette) : root.dim
           font.family: root.fontFamily
@@ -158,6 +160,7 @@ Item {
         spacing: Style.space(4)
 
         Text {
+          textFormat: Text.PlainText
           anchors.right: parent.right
           text: Model.capital(Model.hourWhen(root.hour, root.lms, root.use24))
           color: root.hour && root.hour.now ? root.accent : root.foreground
@@ -166,6 +169,7 @@ Item {
           font.bold: true
         }
         Text {
+          textFormat: Text.PlainText
           anchors.right: parent.right
           text: root.hour ? Model.conditionLabel(root.hour.code, root.hour.isDay) : ""
           color: root.dim
@@ -247,6 +251,7 @@ Item {
             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
           }
           Text {
+            textFormat: Text.PlainText
             visible: !!slot.h && slot.h.dayStart
             x: Style.space(5)
             y: 0
@@ -273,6 +278,7 @@ Item {
               spacing: Style.space(5)
 
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: slot.h ? (slot.h.now ? "Now" : Model.hourText(slot.h.t, root.use24)) : ""
                 color: slot.focused ? root.accent : root.dim
@@ -295,6 +301,7 @@ Item {
                 animated: false
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: slot.h ? Model.tempText(slot.h.temp, root.imperial) : ""
                 color: slot.h ? Model.tempColor(slot.h.temp, root.palette) : root.dim
@@ -311,6 +318,7 @@ Item {
                 readonly property real pop: slot.h && !isNaN(slot.h.pop) ? slot.h.pop : 0
                 Text {
                   id: popLabel
+                  textFormat: Text.PlainText
                   visible: parent.pop >= 10
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: Math.round(parent.pop) + "%"
@@ -326,6 +334,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   visible: !!slot.h && !isNaN(slot.h.windDir)
                   text: "↑"
                   rotation: slot.h && !isNaN(slot.h.windDir) ? slot.h.windDir + 180 : 0
@@ -334,6 +343,7 @@ Item {
                   font.pixelSize: Style.font.caption
                 }
                 Text {
+                  textFormat: Text.PlainText
                   text: slot.h ? String(Model.speed(slot.h.wind, root.imperial)) : ""
                   color: root.dim
                   font.family: root.fontFamily
@@ -412,6 +422,7 @@ Item {
           x: modelData.i / track.span * track.width
           Rectangle { x: -0.5; y: track.lineY - Style.space(3); width: 1; height: Style.space(6); color: root.dim }
           Text {
+            textFormat: Text.PlainText
             x: -width / 2
             y: track.lineY + Style.space(5)
             visible: x + parent.x > 0 && parent.x + width / 2 < track.width
@@ -450,6 +461,7 @@ Item {
           required property var modelData
           spacing: Style.space(2)
           Text {
+            textFormat: Text.PlainText
             text: modelData.label.toUpperCase()
             color: root.dim
             font.family: root.fontFamily
@@ -458,6 +470,7 @@ Item {
             font.letterSpacing: 1.1
           }
           Text {
+            textFormat: Text.PlainText
             text: modelData.value
             color: root.foreground
             font.family: root.fontFamily

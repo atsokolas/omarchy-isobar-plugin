@@ -117,6 +117,7 @@ Item {
 
   // Sunrise, the length of the day, sunset — one line under the horizon.
   Text {
+    textFormat: Text.PlainText
     anchors.left: parent.left
     anchors.bottom: parent.bottom
     text: root.day && root.polar === "" ? "↑ " + Model.clockText(root.day.sunrise, root.use24) : ""
@@ -126,6 +127,7 @@ Item {
   }
 
   Text {
+    textFormat: Text.PlainText
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     text: root.day && root.polar === "" ? Model.clockText(root.day.sunset, root.use24) + " ↓" : ""
@@ -135,6 +137,7 @@ Item {
   }
 
   Text {
+    textFormat: Text.PlainText
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
     readonly property string delta: root.day && root.yesterday ? Model.daylightDeltaText(root.day.daylight, root.yesterday.daylight) : ""
