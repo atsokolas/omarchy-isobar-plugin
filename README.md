@@ -102,6 +102,20 @@ Change these on the widget's `shell.json` entry or on the panel's settings page.
 | `refreshMinutes` | `15` | How often to fetch, 5–180 |
 | `places` | `[]` | Other cities to keep an eye on, up to eight |
 
+## Languages
+
+Isobar follows the language picked under Setup > Language, the way Omarchy's own panels do, and switches with it live. It ships in all 50 of Omarchy's languages, right-to-left ones mirrored. Clocks follow the same language: 24-hour where it is usual, am and pm where it isn't.
+
+Every word lives in `i18n/`, one flat JSON catalog per Omarchy language code (`en.json`, `uk.json`, `pt-BR.json`), read through the shell's `Commons.Translations`. A word missing from a translation falls back to English, so a catalog can start small. To add a language, copy `en.json` to `<code>.json` and translate the values:
+
+- Each sentence is one string with `%1`, `%2` slots, never pieces joined in code, so put the slots wherever your language wants them. Sentences are capitalised after they are filled in, so words like `noun.rain` and `sky.cloudy` are written as they'd appear mid-sentence.
+- A string that counts is an object of plural forms (`{ "one": …, "few": …, "many": …, "other": … }`) with the categories your language uses.
+- Where a sentence's words agree with the weather it names, add that sentence for that weather alone: `nowcast.easing.storms` is used before `nowcast.easing` when it's storms. `uk.json` does this for plural nouns.
+- A condition's label is lowercased at its first letter where it appears mid-sentence (the copied forecast). If that's wrong for your language, as for German nouns, give `conditionInline.<id>` too.
+- Keep units, keys and brand names as they are. Alerts are the National Weather Service's own words and stay in English.
+
+`./tests/run` checks that each catalog is complete, uses the same slots as English and has every plural form its language needs; `node tests/check-catalog.js <code>` checks one language and lists strings left identical to English. Settings descriptions are drawn on one line in capitals, so keep them under about 45 characters.
+
 ## IPC
 
 ```bash
@@ -119,7 +133,7 @@ omarchy-shell atsokolas.isobar refresh
 Isobar has no account, no key and no telemetry. To fetch a forecast it has to say where, so these leave the machine:
 
 - **Open-Meteo** ([forecast](https://open-meteo.com/en/docs) and [air quality](https://open-meteo.com/en/docs/air-quality-api)) gets the coordinates of home and of each saved place, every refresh. Weather data by [Open-Meteo.com](https://open-meteo.com/), under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-- **Open-Meteo's geocoder** gets what you type into the location and add-a-place searches, and a location name that has no coordinates.
+- **Open-Meteo's geocoder** gets what you type into the location and add-a-place searches, a location name that has no coordinates, and your Omarchy language (`uk`), so it can answer with names in it.
 - **The National Weather Service** ([api.weather.gov](https://www.weather.gov/documentation/services-web-api)) gets the coordinates of home and of each saved place inside the US, when alerts are on. Points elsewhere are never sent.
 - **ipinfo.io** sees your IP address, and only when you haven't set a location; it answers with roughly where that is.
 - **windy.com** opens in your browser with the coordinates, when you ask for the radar (`o`).
@@ -135,7 +149,7 @@ Every request is a plain `curl` over https only, with an `omarchy-isobar` user a
 
 ## Tests
 
-The logic lives in `Model.js` as plain functions, so the QML stays thin. The tests run against a real Open-Meteo response, plus synthetic forecasts for the edge cases.
+The logic lives in `Model.js` as plain functions, so the QML stays thin. The tests run against a real Open-Meteo response, plus synthetic forecasts for the edge cases. They read the same `i18n/` catalogs the shell does, and run every sentence through a catalog with each letter blanked, so any English left in the code shows up.
 
 ```bash
 ./tests/run

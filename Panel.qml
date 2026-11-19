@@ -36,6 +36,13 @@ Panel {
   readonly property bool away: viewPlace !== null
   readonly property string viewName: away ? viewPlace.name : service.placeName
 
+  // Isobar's words, from the service's catalogs in i18n/. Calls stay inside
+  // bindings, so switching language re-renders them.
+  readonly property var strings: service.strings
+  function t(key) { return strings.t(key) }
+  function say(key, a, b, c) { return Model.say(strings, key, a, b, c) }
+  function sayN(key, n, a, b) { return Model.sayN(strings, key, n, a, b) }
+
   // Home and every saved place are read through the same view.
   WeatherView {
     id: view
@@ -45,6 +52,7 @@ Panel {
     imperial: root.service.imperial
     use24: root.service.use24
     nowMs: root.service.nowMs
+    strings: root.service.strings
   }
 
   readonly property var fc: view.forecast
@@ -267,7 +275,7 @@ Panel {
   function hourReadout(i) {
     var h = chartHours[i]
     if (!h) return ""
-    var bits = [Model.hourText(h.t, use24), Model.tempText(h.temp, imperial), Model.conditionLabel(h.code, h.isDay)]
+    var bits = [Model.hourText(strings, h.t, use24), Model.tempText(h.temp, imperial), Model.conditionLabel(strings, h.code, h.isDay)]
     if (!isNaN(h.pop) && h.pop >= 10) bits.push(h.pop + "%")
     return bits.join("  ·  ")
   }
@@ -324,7 +332,7 @@ Panel {
       busy = true
       geocodeProcess.out = ""
       geocodeProcess.asked = pending
-      geocodeProcess.command = Model.curl(Model.geocodeQuery(pending), 6, Model.MAX_BYTES.geocode)
+      geocodeProcess.command = Model.curl(Model.geocodeQuery(pending, I18n.language), 6, Model.MAX_BYTES.geocode)
       geocodeProcess.running = true
     }
   }
@@ -355,6 +363,8 @@ Panel {
     font.pixelSize: Style.font.caption
     font.bold: true
     font.letterSpacing: 1.1
+    // Catalogs say "Wind"; the caption sets it in capitals.
+    font.capitalization: Font.AllUppercase
   }
 
   component Tile: Item {
@@ -390,6 +400,10 @@ Panel {
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
+        // A quarter of the panel is tight for some languages' words
+        // ("ПдПдСх, пориви 37"): shrink a little before eliding.
+        fontSizeMode: Text.HorizontalFit
+        minimumPixelSize: Math.floor(Style.font.caption * 0.85)
         elide: Text.ElideRight
       }
     }
@@ -541,8 +555,8 @@ Panel {
                 text: trouble
                   ? root.service.lastError
                   : root.fc
-                    ? Model.weekday(root.lms) + " " + Model.clockText(root.lms, root.use24) + "  ·  updated " + Model.ageText(root.fc.fetchedAt, root.service.nowMs)
-                    : root.away ? "Looking at the sky over " + root.viewName + "…" : "Looking at the sky…"
+                    ? root.say("panel.updated", Model.weekday(root.strings, root.lms), Model.clockText(root.strings, root.lms, root.use24), Model.ageText(root.strings, root.fc.fetchedAt, root.service.nowMs))
+                    : root.away ? root.say("panel.lookingOver", root.viewName) : root.t("panel.looking")
                 color: trouble ? root.urgent : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -559,21 +573,21 @@ Panel {
               PanelActionButton {
                 visible: root.away
                 iconText: "󰋜"
-                tooltipText: "Back home  g"
+                tooltipText: root.t("panel.backHome")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.showPlace("")
               }
               PanelActionButton {
                 iconText: "󰥔"
-                tooltipText: "Hour by hour  h"
+                tooltipText: root.t("panel.hourByHourKey")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.toggleHours()
               }
               PanelActionButton {
                 iconText: "󰇧"
-                tooltipText: "Places  p"
+                tooltipText: root.t("panel.placesKey")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.showPage("places")
@@ -581,7 +595,7 @@ Panel {
               PanelActionButton {
                 id: refreshButton
                 iconText: "󰑐"
-                tooltipText: root.viewLoading ? "Refreshing…" : "Refresh  r"
+                tooltipText: root.viewLoading ? root.t("panel.refreshing") : root.t("panel.refreshKey")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.refresh()
@@ -593,7 +607,7 @@ Panel {
               }
               PanelActionButton {
                 iconText: "󰒓"
-                tooltipText: "Settings  s"
+                tooltipText: root.t("panel.settingsKey")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.showPage("settings")
@@ -620,7 +634,9 @@ Panel {
               border.color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.35)
             }
             Rectangle {
-              x: 0
+              // Anchored, not placed by x, so it moves to the right edge when
+              // the panel is mirrored for right-to-left languages.
+              anchors.left: parent.left
               y: Style.space(8)
               width: Style.space(3)
               height: parent.height - Style.space(16)
@@ -630,7 +646,8 @@ Panel {
 
             Column {
               id: alertColumn
-              x: Style.space(16)
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(16)
               y: Style.space(10)
               width: parent.width - Style.space(28)
               spacing: Style.space(4)
@@ -678,7 +695,7 @@ Panel {
 
               Text {
                 textFormat: Text.PlainText
-                text: alertBand.expanded ? "Less" : (view.activeAlerts.length > 1 ? "And " + (view.activeAlerts.length - 1) + " more  ·  read" : "Read the details")
+                text: alertBand.expanded ? root.t("alerts.less") : (view.activeAlerts.length > 1 ? root.sayN("alerts.more", view.activeAlerts.length - 1, view.activeAlerts.length - 1) : root.t("alerts.read"))
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -756,7 +773,7 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 anchors.right: parent.right
-                text: root.now ? Model.conditionLabel(root.now.code, root.now.isDay) : ""
+                text: root.now ? Model.conditionLabel(root.strings, root.now.code, root.now.isDay) : ""
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.heading
@@ -765,7 +782,7 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 anchors.right: parent.right
-                text: root.now ? "Feels like " + Model.tempText(root.now.feels, root.imperial) : ""
+                text: root.now ? root.say("panel.feelsLike", Model.tempText(root.now.feels, root.imperial)) : ""
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -776,14 +793,14 @@ Panel {
                 visible: !!view.todayData
                 Text {
                   textFormat: Text.PlainText
-                  text: "H " + (view.todayData ? Model.tempText(view.todayData.max, root.imperial) : "")
+                  text: root.say("panel.high", view.todayData ? Model.tempText(view.todayData.max, root.imperial) : "")
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: "L " + (view.todayData ? Model.tempText(view.todayData.min, root.imperial) : "")
+                  text: root.say("panel.low", view.todayData ? Model.tempText(view.todayData.min, root.imperial) : "")
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -811,7 +828,7 @@ Panel {
             Layout.fillWidth: true
             Layout.topMargin: -Style.space(4)
             visible: root.away && text !== ""
-            text: root.away ? Model.compareLine(root.fc, root.service.forecast, root.imperial, root.service.placeName) : ""
+            text: root.away ? Model.compareLine(root.strings, root.fc, root.service.forecast, root.imperial, root.service.placeName) : ""
             color: root.accent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -827,7 +844,7 @@ Panel {
             text: {
               var bits = []
               if (view.wear) bits.push(view.wear)
-              if (view.fullMoon && view.night) bits.push("The " + view.fullMoon + " is up tonight.")
+              if (view.fullMoon && view.night) bits.push(root.say("panel.fullMoonUp", view.fullMoon))
               return bits.join("  ")
             }
             color: root.dim
@@ -860,7 +877,7 @@ Panel {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
-              text: "NEXT 2 HOURS"
+              text: root.t("panel.nextTwoHours")
               color: root.wetTint
             }
 
@@ -902,14 +919,14 @@ Panel {
             Caps {
               id: chartTitle
               anchors.left: parent.left
-              text: root.selectedDay ? Model.weekday(root.selectedDay.t).toUpperCase() : "NEXT 24 HOURS"
+              text: root.selectedDay ? Model.weekday(root.strings, root.selectedDay.t) : root.t("panel.next24Hours")
             }
             Text {
               textFormat: Text.PlainText
               anchors.right: parent.right
               anchors.verticalCenter: chartTitle.verticalCenter
               text: chart.activeIndex >= 0 ? root.hourReadout(chart.activeIndex)
-                : root.selectedDay ? Model.conditionLabel(root.selectedDay.code, 1) + "  ·  " + Model.precipText(root.selectedDay.precipSum, root.imperial)
+                : root.selectedDay ? Model.conditionLabel(root.strings, root.selectedDay.code, 1) + "  ·  " + Model.precipText(root.strings, root.selectedDay.precipSum, root.imperial)
                 : ""
               color: root.foreground
               font.family: root.fontFamily
@@ -925,6 +942,7 @@ Panel {
             palette: root.palette
             imperial: root.imperial
             use24: root.use24
+            strings: root.strings
             startsNow: root.dayIndex === 0
             sunEvents: root.sunEvents
             foreground: root.foreground
@@ -941,9 +959,48 @@ Panel {
           // Each day's low-to-high as a bar on the week's shared scale, the
           // way a glance at a thermometer works. ↑ ↓ (or a click) puts that
           // day on the chart above.
+          // The day names' column is as wide as the widest one needs — "Today"
+          // in English, "Сьогодні" or "Aujourd'hui" elsewhere — and the same
+          // on every row, so the icons stay in line. Measured bold, as the
+          // selected day is drawn.
+          Item {
+            id: dayNames
+            Layout.preferredHeight: 0
+            Layout.preferredWidth: 0
+            visible: false
+            readonly property real nameWidth: Math.max(Style.space(52),
+              Math.ceil(Math.max(todayMetrics.advanceWidth, weekdayMetrics.advanceWidth)) + Style.space(8))
+            TextMetrics {
+              id: todayMetrics
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              text: root.t("day.today")
+            }
+            TextMetrics {
+              id: weekdayMetrics
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              // The longest short weekday in this language.
+              text: {
+                var longest = ""
+                for (var d = 0; d < 7; d++) {
+                  var name = root.t("weekday.short." + d)
+                  if (name.length > longest.length) longest = name
+                }
+                return longest
+              }
+            }
+          }
+
           Column {
+            id: weekList
             Layout.fillWidth: true
             spacing: Style.space(1)
+            // How wide the day names' column is; measured below, outside the
+            // Column, which would otherwise try to stack the measurements.
+            readonly property real nameWidth: dayNames.nameWidth
 
             Repeater {
               model: root.week
@@ -963,10 +1020,11 @@ Panel {
                 Text {
                   id: dayName
                   textFormat: Text.PlainText
-                  x: Style.space(8)
-                  width: Style.space(52)
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(8)
+                  width: weekList.nameWidth
                   anchors.verticalCenter: parent.verticalCenter
-                  text: dayRow.index === 0 ? "Today" : Model.weekday(dayRow.modelData.t, true)
+                  text: dayRow.index === 0 ? root.t("day.today") : Model.weekday(root.strings, dayRow.modelData.t, true)
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1089,9 +1147,9 @@ Panel {
             spacing: Style.space(12)
 
             Tile {
-              label: "WIND"
+              label: root.t("tile.wind")
               value: root.now ? Model.speedText(root.now.wind, root.imperial) : "—"
-              sub: root.now ? Model.compass(root.now.windDir) + (isNaN(root.now.gusts) ? "" : ", gusts " + Model.speed(root.now.gusts, root.imperial)) : ""
+              sub: root.now ? (isNaN(root.now.gusts) ? Model.compass(root.strings, root.now.windDir) : root.say("wind.gusts", Model.compass(root.strings, root.now.windDir), Model.speed(root.now.gusts, root.imperial))) : ""
               art: Component {
                 // A compass with the wind's heading: where it is blowing to.
                 Canvas {
@@ -1128,23 +1186,23 @@ Panel {
             }
 
             Tile {
-              label: "HUMIDITY"
+              label: root.t("tile.humidity")
               value: root.now && !isNaN(root.now.humidity) ? Math.round(root.now.humidity) + "%" : "—"
-              sub: root.now && !isNaN(root.now.dew) ? Model.dewLine(view.comfort, Model.tempText(root.now.dew, root.imperial)) : ""
+              sub: root.now && !isNaN(root.now.dew) ? Model.dewLine(root.strings, view.comfort, Model.tempText(root.now.dew, root.imperial)) : ""
             }
 
             Tile {
               readonly property real uv: root.now ? (root.now.isDay ? root.now.uv : (view.todayData ? view.todayData.uvMax : NaN)) : NaN
-              label: root.now && !root.now.isDay ? "UV TODAY" : "UV"
+              label: root.now && !root.now.isDay ? root.t("tile.uvToday") : root.t("tile.uv")
               value: isNaN(uv) ? "—" : String(Math.round(uv))
-              sub: Model.uvLabel(uv)
+              sub: Model.uvLabel(root.strings, uv)
             }
 
             Tile {
-              readonly property var aqi: Model.aqiReading(view.air, root.imperial)
-              label: aqi ? "AIR" : "PRESSURE"
-              value: aqi ? String(aqi.value) : (root.now ? Model.pressureText(root.now.pressure, root.imperial) : "—")
-              sub: aqi ? aqi.label : Model.pressureTrend(root.fc, root.lms)
+              readonly property var aqi: Model.aqiReading(root.strings, view.air, root.imperial)
+              label: aqi ? root.t("tile.air") : root.t("tile.pressure")
+              value: aqi ? String(aqi.value) : (root.now ? Model.pressureText(root.strings, root.now.pressure, root.imperial) : "—")
+              sub: aqi ? aqi.label : Model.pressureTrend(root.strings, root.fc, root.lms)
             }
           }
 
@@ -1156,6 +1214,7 @@ Panel {
             yesterday: view.yesterdayData
             lms: root.lms
             use24: root.use24
+            strings: root.strings
             moonPhase: root.service.moonPhase
             foreground: root.foreground
             dim: root.dim
@@ -1173,7 +1232,7 @@ Panel {
               textFormat: Text.PlainText
               anchors.left: parent.left
               readonly property bool old: root.away ? (root.fc && Date.now() - root.fc.fetchedAt > root.service.refreshMinutes * 60000 * 2) : root.service.stale
-              text: old ? "Open-Meteo  ·  an older forecast" : "Open-Meteo"
+              text: old ? root.t("panel.olderForecast") : "Open-Meteo"
               color: old ? root.urgent : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -1181,7 +1240,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               anchors.right: parent.right
-              text: root.service.places.length > 0 ? "← → hours   ↑ ↓ days   h hour by hour   [ ] places" : "← → hours   ↑ ↓ days   h hour by hour   p places"
+              text: root.service.places.length > 0 ? root.t("panel.footerStep") : root.t("panel.footer")
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -1213,7 +1272,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               width: parent.width
-              text: root.viewName || "Hour by hour"
+              text: root.viewName || root.t("hours.title")
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -1223,7 +1282,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               width: parent.width
-              text: "Hour by hour" + (root.away && root.service.forecast && root.fc ? "  ·  " + Model.offsetText(root.fc.offset, root.service.forecast.offset) : "")
+              text: root.away && root.service.forecast && root.fc ? root.say("hours.titleAway", Model.offsetText(root.strings, root.fc.offset, root.service.forecast.offset)) : root.t("hours.title")
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -1237,14 +1296,14 @@ Panel {
             PanelActionButton {
               visible: root.away
               iconText: "󰋜"
-              tooltipText: "Back home  g"
+              tooltipText: root.t("panel.backHome")
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: root.showPlace("")
             }
             PanelActionButton {
               iconText: "󰁍"
-              tooltipText: "The overview  h"
+              tooltipText: root.t("hours.overviewKey")
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: root.showPage("main")
@@ -1258,10 +1317,11 @@ Panel {
           id: hourView
           Layout.fillWidth: true
           Layout.preferredHeight: implicitHeight
-          hours: Model.hourStrip(root.fc, root.lmsHour)
+          hours: Model.hourStrip(root.strings, root.fc, root.lmsHour)
           lms: root.lms
           imperial: root.imperial
           use24: root.use24
+          strings: root.strings
           palette: root.palette
           foreground: root.foreground
           dim: root.dim
@@ -1281,7 +1341,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: "scroll or ← →  an hour  ·  ↑ ↓  a day  ·  t  now" + (root.service.places.length > 0 ? "  ·  [ ]  places" : "") + "  ·  h  overview"
+          text: root.service.places.length > 0 ? root.t("hours.footerStep") : root.t("hours.footer")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1317,7 +1377,7 @@ Panel {
               spacing: Style.space(2)
               Text {
                 textFormat: Text.PlainText
-                text: "Places"
+                text: root.t("places.title")
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
@@ -1325,7 +1385,7 @@ Panel {
               }
               Text {
                 textFormat: Text.PlainText
-                text: root.service.places.length === 0 ? "Keep an eye on somewhere else" : "Home and " + root.service.places.length + " more"
+                text: root.service.places.length === 0 ? root.t("places.empty") : root.sayN("places.count", root.service.places.length, root.service.places.length)
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1336,7 +1396,7 @@ Panel {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               iconText: "󰁍"
-              tooltipText: "Back"
+              tooltipText: root.t("panel.back")
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: root.showPage("main")
@@ -1385,7 +1445,7 @@ Panel {
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: root.service.places.length >= Model.MAX_PLACES ? "Eight is the most — remove one to add another" : "Add a place"
+                  text: root.service.places.length >= Model.MAX_PLACES ? root.t("places.full") : root.t("places.add")
                   color: placeCard.hot ? root.accent : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1397,7 +1457,8 @@ Panel {
               SkyIcon {
                 id: cardIcon
                 visible: !placeCard.isAdd
-                x: Style.space(12)
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
                 iconSize: Style.space(30)
                 kind: placeCard.cur ? Model.iconKind(placeCard.cur.code) : "cloudy"
@@ -1428,8 +1489,11 @@ Panel {
                   Text {
                     id: cardName
                     textFormat: Text.PlainText
+                    // Anchored so it starts at the right edge when mirrored for
+                    // right-to-left languages, with the home glyph beside it.
+                    anchors.left: parent.left
                     width: Math.min(implicitWidth, parent.width - Style.space(20))
-                    text: placeCard.isHome ? (root.service.placeName || "Home") : (placeCard.place ? placeCard.place.name : "")
+                    text: placeCard.isHome ? (root.service.placeName || root.t("places.home")) : (placeCard.place ? placeCard.place.name : "")
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
@@ -1453,8 +1517,8 @@ Panel {
                   readonly property var note: placeCard.place ? root.service.noteFor(placeCard.place.key) : null
                   width: parent.width
                   text: note ? note.text : placeCard.cur
-                    ? Model.conditionLabel(placeCard.cur.code, placeCard.cur.isDay) + (placeCard.day ? "  ·  H " + Model.tempText(placeCard.day.max, root.imperial) + "  L " + Model.tempText(placeCard.day.min, root.imperial) : "")
-                    : (root.service.fetchingPlace !== "" && placeCard.place && root.service.fetchingPlace === placeCard.place.key ? "Looking at the sky…" : (placeCard.place ? placeCard.place.description : ""))
+                    ? (placeCard.day ? root.say("places.range", Model.conditionLabel(root.strings, placeCard.cur.code, placeCard.cur.isDay), Model.tempText(placeCard.day.max, root.imperial), Model.tempText(placeCard.day.min, root.imperial)) : Model.conditionLabel(root.strings, placeCard.cur.code, placeCard.cur.isDay))
+                    : (root.service.fetchingPlace !== "" && placeCard.place && root.service.fetchingPlace === placeCard.place.key ? root.t("panel.looking") : (placeCard.place ? placeCard.place.description : ""))
                   color: note ? root.accent : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1473,7 +1537,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.right: parent.right
-                  text: placeCard.forecast ? Model.clockText(placeCard.there, root.use24) : ""
+                  text: placeCard.forecast ? Model.clockText(root.strings, placeCard.there, root.use24) : ""
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1482,7 +1546,7 @@ Panel {
                 Text {
                   textFormat: Text.PlainText
                   anchors.right: parent.right
-                  text: placeCard.isHome ? "here" : (placeCard.forecast && root.service.forecast ? Model.offsetText(placeCard.forecast.offset, root.service.forecast.offset) : "")
+                  text: placeCard.isHome ? root.t("places.here") : (placeCard.forecast && root.service.forecast ? Model.offsetText(root.strings, placeCard.forecast.offset, root.service.forecast.offset) : "")
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1529,8 +1593,8 @@ Panel {
                   id: barButton
                   visible: !!placeCard.place && (placeCard.hot || cardActions.onBar)
                   iconText: cardActions.onBar ? "󰐃" : "󰤱"
-                  tooltipText: cardActions.onBar ? "Take off the bar  b"
-                    : cardActions.barFull ? "Three on the bar is the most" : "Show on the bar  b"
+                  tooltipText: cardActions.onBar ? root.t("places.offBar")
+                    : cardActions.barFull ? root.t("places.barFull") : root.t("places.onBar")
                   foreground: cardActions.onBar ? root.accent : root.dim
                   hoverColor: root.accent
                   fontFamily: root.fontFamily
@@ -1541,7 +1605,7 @@ Panel {
                   id: removeButton
                   visible: !!placeCard.place && placeCard.hot
                   iconText: "󰅖"
-                  tooltipText: "Remove  x"
+                  tooltipText: root.t("places.remove")
                   foreground: root.dim
                   hoverColor: root.urgent
                   fontFamily: root.fontFamily
@@ -1556,7 +1620,7 @@ Panel {
           Text {
             textFormat: Text.PlainText
             Layout.fillWidth: true
-            text: "↑ ↓ choose  ·  Return open  ·  b bar  ·  a add  ·  x remove  ·  [ ] step through"
+            text: root.t("places.footer")
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -1580,7 +1644,7 @@ Panel {
             textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Settings"
+            text: root.t("settings.title")
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -1591,7 +1655,7 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             iconText: "󰁍"
-            tooltipText: "Back"
+            tooltipText: root.t("panel.back")
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.showPage("main")
@@ -1602,13 +1666,13 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Location"
-          meta: (root.service.placeName || "Unknown") + (root.service.automatic ? "  ·  from your network" : "")
+          title: root.t("settings.location")
+          meta: root.service.automatic ? root.say("settings.locationAuto", root.service.placeName || root.t("settings.unknown")) : (root.service.placeName || root.t("settings.unknown"))
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
             Button {
-              text: "Change"
+              text: root.t("settings.change")
               foreground: root.foreground
               fontFamily: root.fontFamily
               bordered: true
@@ -1619,13 +1683,13 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Units"
-          meta: root.service.unit === "auto" ? "Following your locale" : (root.imperial ? "°F, mph, inches" : "°C, km/h, millimetres")
+          title: root.t("settings.units")
+          meta: root.service.unit === "auto" ? root.t("settings.unitsAuto") : (root.imperial ? root.t("settings.unitsImperial") : root.t("settings.unitsMetric"))
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
             ButtonGroup {
-              options: [{ value: "auto", label: "Auto" }, { value: "metric", label: "°C" }, { value: "imperial", label: "°F" }]
+              options: [{ value: "auto", label: root.t("settings.unitsAutoOption") }, { value: "metric", label: "°C" }, { value: "imperial", label: "°F" }]
               value: root.service.unit
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1637,8 +1701,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Rain hint on the bar"
-          meta: "\"Rain in 20m\" beside the temperature, only when it's coming"
+          title: root.t("settings.showHint")
+          meta: root.t("settings.showHintMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1651,8 +1715,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Heads-up before rain"
-          meta: "A quiet toast half an hour before it starts"
+          title: root.t("settings.notify")
+          meta: root.t("settings.notifyMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1665,8 +1729,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Open hour by hour"
-          meta: "The panel opens on the hours rather than the overview"
+          title: root.t("settings.openHours")
+          meta: root.t("settings.openHoursMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1679,8 +1743,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Weather alerts"
-          meta: "Warnings from the National Weather Service, in the US"
+          title: root.t("settings.alerts")
+          meta: root.t("settings.alertsMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1693,8 +1757,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Firsts of the season"
-          meta: "First frost, first snow, the first warm day in months"
+          title: root.t("settings.firsts")
+          meta: root.t("settings.firstsMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1707,8 +1771,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Notes from your places"
-          meta: "Snow, storms and real heat or cold where you keep an eye"
+          title: root.t("settings.notes")
+          meta: root.t("settings.notesMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1721,8 +1785,8 @@ Panel {
 
         PanelHero {
           Layout.fillWidth: true
-          title: "Moving sky"
-          meta: "Rays turn and rain falls while you're looking"
+          title: root.t("settings.animate")
+          meta: root.t("settings.animateMeta")
           foreground: root.foreground
           fontFamily: root.fontFamily
           trailingControl: Component {
@@ -1738,7 +1802,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: "← →  read the hours   ·   ↑ ↓  or 1–7  pick a day   ·   t  back to now\nh  hour by hour   ·   /  location   ·   u  units   ·   o  radar   ·   c  copy   ·   r  refresh"
+          text: root.t("settings.keys")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1762,7 +1826,7 @@ Panel {
             textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: placeSearch.mode === "add" ? "Add a place" : "Location"
+            text: placeSearch.mode === "add" ? root.t("places.add") : root.t("settings.location")
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -1773,7 +1837,7 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             iconText: "󰁍"
-            tooltipText: "Back"
+            tooltipText: root.t("panel.back")
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.showPage(placeSearch.mode === "add" ? "places" : "main")
@@ -1783,7 +1847,7 @@ Panel {
         TextField {
           id: placeField
           Layout.fillWidth: true
-          placeholderText: placeSearch.mode === "add" ? "A city to keep an eye on" : "Search for a city"
+          placeholderText: placeSearch.mode === "add" ? root.t("search.addPlaceholder") : root.t("search.placeholder")
           foreground: root.foreground
           font.family: root.fontFamily
           onTextChanged: if (root.page === "place") geocodeDebounce.restart()
@@ -1822,7 +1886,8 @@ Panel {
               Text {
                 id: placeIcon
                 textFormat: Text.PlainText
-                x: Style.space(10)
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: placeRow.isAuto ? "󰆤" : "󰍎"
                 color: placeRow.hot ? Style.hoverStateColor(root.foreground, root.accent) : root.dim
@@ -1835,7 +1900,7 @@ Panel {
                 anchors.left: placeIcon.right
                 anchors.leftMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
-                text: placeRow.isAuto ? "Use my location" : (placeRow.result ? placeRow.result.name : "")
+                text: placeRow.isAuto ? root.t("search.useMyLocation") : (placeRow.result ? placeRow.result.name : "")
                 color: placeRow.hot ? Style.hoverStateColor(root.foreground, root.accent) : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -1849,7 +1914,7 @@ Panel {
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: placeRow.isAuto
-                  ? (root.service.automatic ? "current  ·  from your network" : "from your network")
+                  ? (root.service.automatic ? root.t("search.currentFromNetwork") : root.t("search.fromNetwork"))
                   : (placeRow.result ? placeRow.result.description : "")
                 color: root.dim
                 font.family: root.fontFamily
@@ -1871,7 +1936,7 @@ Panel {
           textFormat: Text.PlainText
           Layout.fillWidth: true
           visible: placeSearch.busy || (Model.trim(placeField.text).length >= 2 && placeSearch.results.length === 0)
-          text: placeSearch.busy ? "Searching…" : placeSearch.failed ? "Can't reach the place search — check the network" : "Nowhere by that name"
+          text: placeSearch.busy ? root.t("search.searching") : placeSearch.failed ? root.t("search.failed") : root.t("search.nothing")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -1884,8 +1949,8 @@ Panel {
           textFormat: Text.PlainText
           Layout.fillWidth: true
           text: placeSearch.mode === "add"
-            ? "Kept in Isobar's settings, beside home.  ↑ ↓ choose  ·  Return add  ·  Esc back"
-            : "Shared with Omarchy's own weather widget.  ↑ ↓ choose  ·  Return pick  ·  Esc back"
+            ? root.t("search.addFooter")
+            : root.t("search.footer")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

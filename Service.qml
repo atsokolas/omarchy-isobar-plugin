@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import "Model.js" as Model
 
 // One engine per shell. Every bar — one per monitor — reads this instance, so
@@ -40,8 +41,21 @@ Item {
   readonly property bool notes: Model.boolSetting(setting("notes", true), true)
   readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", 15), 15, 5, 180)
 
+  // ---- Words ---------------------------------------------------------------
+  // Isobar's own catalogs in i18n/, in the language picked under Setup >
+  // Language, switching live. Model.js takes this as `tr`; number() gives
+  // decimals the language's separator.
+  readonly property Translations strings: Translations {
+    // A plain path: a hot reload can load the plugin from a qs:/// URL, and
+    // Translations only understands file:// ones.
+    directory: String(Qt.resolvedUrl("i18n")).replace(/^[a-z]+:\/\//, "")
+    function number(value, decimals) { return I18n.formatNumber(value, decimals) }
+  }
+  // Clocks follow the same language, not the locale the shell started in.
+  readonly property var formatLocale: Qt.locale(I18n.formatLocale)
+
   // Qt spells AM/PM as "a" or "AP" depending on version; either means 12h.
-  readonly property bool use24: !/a/i.test(Qt.locale().timeFormat(Locale.ShortFormat).replace(/'[^']*'/g, ""))
+  readonly property bool use24: !/a/i.test(formatLocale.timeFormat(Locale.ShortFormat).replace(/'[^']*'/g, ""))
   readonly property bool imperial: Model.shouldUseImperial(unit, Qt.locale().name, ipLocation ? ipLocation.country : "")
 
   // ---- Location ------------------------------------------------------------
@@ -62,7 +76,11 @@ Item {
   property var air: null
   property bool loading: false
   property bool stale: false
-  property string lastError: ""
+  // What went wrong, as a catalog key ("error.offline") and what it names,
+  // so the words follow a language switch; lastError is those words.
+  property string errorKey: ""
+  property string errorArg: ""
+  readonly property string lastError: errorKey ? Model.say(strings, errorKey, errorArg) : ""
   property int failures: 0
   property var palette: null
 
@@ -76,6 +94,7 @@ Item {
     imperial: root.imperial
     use24: root.use24
     nowMs: root.nowMs
+    strings: root.strings
   }
 
   readonly property real localNow: homeView.localNow
@@ -94,7 +113,7 @@ Item {
   readonly property real moonPhase: Model.moonPhase(nowMs)
 
   readonly property string tempLabel: current ? Model.tempText(current.temp, imperial) : ""
-  readonly property string hint: showHint ? Model.barHint(outlook, use24) : ""
+  readonly property string hint: showHint ? Model.barHint(strings, outlook, use24) : ""
 
   // Raised when the sky itself changes, so the icon can make an entrance.
   signal skyChanged()
@@ -233,7 +252,7 @@ Item {
     loading = false
     var parsed = Model.parseForecast(raw, Date.now())
     if (!parsed) {
-      fail("The forecast came back garbled")
+      fail("error.garbled")
       return
     }
     // A location change mid-flight: drop the answer for the old place.
@@ -243,7 +262,8 @@ Item {
     }
     forecast = parsed
     stale = false
-    lastError = ""
+    errorKey = ""
+    errorArg = ""
     failures = 0
     retryTimer.stop()
     nowMs = Date.now()
@@ -253,10 +273,11 @@ Item {
     checkFirsts()
   }
 
-  function fail(message) {
+  function fail(key, arg) {
     loading = false
     failures++
-    lastError = message
+    errorKey = key
+    errorArg = arg || ""
     stale = forecast !== null
     // 30s, 1m, 2m, 4m … capped at ten minutes. The network usually comes
     // back on its own; there is no need to hammer anyone while it does.
@@ -291,7 +312,7 @@ Item {
   function lookUpName() {
     if (!active || nameLookup.running || Model.trim(configured.name) === "") return
     nameLookup.out = ""
-    nameLookup.command = Model.curl(Model.geocodeQuery(configured.name), 6, Model.MAX_BYTES.geocode)
+    nameLookup.command = Model.curl(Model.geocodeQuery(configured.name, I18n.language), 6, Model.MAX_BYTES.geocode)
     nameLookup.running = true
   }
 
@@ -318,9 +339,7 @@ Item {
     var key = Model.rainKey(outlook)
     if (key === "" || key === _announced) return
     _announced = key
-    var mins = Math.max(5, Math.round(outlook.minutes / 5) * 5)
-    Quickshell.execDetached(Model.toastCommand(
-      Model.shortNoun(outlook.noun).replace(/^./, function(c) { return c.toUpperCase() }) + " in about " + mins + " minutes",
+    Quickshell.execDetached(Model.toastCommand(Model.headsUpTitle(strings, outlook),
       placeName ? placeName + " · " + Model.tempText(current.temp, imperial) : ""))
   }
 
@@ -425,7 +444,7 @@ Item {
 
   function checkFirsts() {
     if (!memoryLoaded || !forecast) return
-    var out = Model.seasonFirsts(forecast, localNow, memory, imperial, placeName, use24)
+    var out = Model.seasonFirsts(strings, forecast, localNow, memory, imperial, placeName, use24)
     remember({ seen: out.seen, notes: memory.notes, alerts: memory.alerts })
     if (!firsts) return
     for (var i = 0; i < out.events.length; i++)
@@ -437,7 +456,7 @@ Item {
     var p = placeFor(key)
     var fc = placeForecasts[key]
     if (!p || !fc) return null
-    return Model.placeNote(fc, Model.nowLocal(nowMs, fc.offset), imperial, p.name, alertsFor(key), nowMs)
+    return Model.placeNote(strings, fc, Model.nowLocal(nowMs, fc.offset), imperial, p.name, alertsFor(key), nowMs)
   }
 
   function checkPlaceNote(key) {
@@ -452,7 +471,7 @@ Item {
     next.notes[id] = Date.now()
     remember(next)
     var cur = fc.current
-    Quickshell.execDetached(Model.toastCommand(note.text, cur ? Model.tempText(cur.temp, imperial) + " · " + Model.conditionLabel(cur.code, cur.isDay) : ""))
+    Quickshell.execDetached(Model.toastCommand(note.text, cur ? Model.tempText(cur.temp, imperial) + " · " + Model.conditionLabel(strings, cur.code, cur.isDay) : ""))
   }
 
   function openRadar(place) {
@@ -464,7 +483,7 @@ Item {
   function copySummary(place) {
     var fc = place ? placeForecasts[place.key] : forecast
     var lms = fc ? Model.nowLocal(nowMs, fc.offset) : localNow
-    var text = Model.copyPayload(fc, lms, imperial, use24, place ? place.name : placeName)
+    var text = Model.copyPayload(strings, fc, lms, imperial, use24, place ? place.name : placeName)
     if (text) Quickshell.execDetached(Model.copyCommand(text))
   }
 
@@ -517,7 +536,7 @@ Item {
       onStreamFinished: root._forecastOut = text
     }
     onExited: function(code) {
-      if (code !== 0) root.fail("Offline — showing the last forecast")
+      if (code !== 0) root.fail("error.offline")
       else root.applyForecast(root._forecastOut)
     }
   }
@@ -542,7 +561,7 @@ Item {
     onExited: function(code) {
       var loc = code === 0 ? Model.parseIpInfo(root._ipOut) : null
       if (loc) root.ipLocation = loc
-      else if (!root.location) root.fail("Can't tell where you are — set a location")
+      else if (!root.location) root.fail("error.noLocation")
     }
   }
 
@@ -575,7 +594,7 @@ Item {
     onExited: function(code) {
       var rows = code === 0 ? Model.parseGeocodingResults(nameLookup.out) : []
       if (rows.length > 0) root.namedLocation = { name: root.configured.name, latitude: rows[0].latitude, longitude: rows[0].longitude, country: rows[0].country }
-      else root.fail("Couldn't find " + root.configured.name)
+      else root.fail("error.notFound", root.configured.name)
     }
   }
 

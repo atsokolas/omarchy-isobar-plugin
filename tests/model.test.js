@@ -3,6 +3,7 @@ const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const path = require("node:path")
 const Model = require("../Model.js")
+const { en } = require("./strings.js")
 
 // A real Open-Meteo answer for Duluth, Minnesota, on a drizzly October
 // afternoon, with the clock pinned to the moment it describes.
@@ -78,11 +79,11 @@ test("local times read as wall-clock, independent of the machine's zone", () => 
   const t = Model.localMs("2026-10-15T17:15")
   assert.equal(new Date(t).getUTCHours(), 17)
   assert.equal(Model.dateKey(t), "2026-10-15")
-  assert.equal(Model.clockText(t, false), "5:15 pm")
-  assert.equal(Model.clockText(t, true), "17:15")
-  assert.equal(Model.hourText(Model.localMs("2026-10-15T00:00"), false), "12am")
-  assert.equal(Model.hourText(Model.localMs("2026-10-15T12:00"), false), "noon")
-  assert.equal(Model.spokenHour(Model.localMs("2026-10-15T21:00"), false), "9 pm")
+  assert.equal(Model.clockText(en, t, false), "5:15 pm")
+  assert.equal(Model.clockText(en, t, true), "17:15")
+  assert.equal(Model.hourText(en, Model.localMs("2026-10-15T00:00"), false), "12am")
+  assert.equal(Model.hourText(en, Model.localMs("2026-10-15T12:00"), false), "noon")
+  assert.equal(Model.spokenHour(en, Model.localMs("2026-10-15T21:00"), false), "9 pm")
 })
 
 test("units convert, and a rounded zero has no sign", () => {
@@ -91,7 +92,7 @@ test("units convert, and a rounded zero has no sign", () => {
   assert.equal(Model.tempText(-4, false), "−4°")
   assert.equal(Model.deltaDegrees(5, true), 9)
   assert.equal(Model.speedText(100, true), "62 mph")
-  assert.equal(Model.pressureText(1013.25, true), "29.92 inHg")
+  assert.equal(Model.pressureText(en, 1013.25, true), "29.92 inHg")
   assert.equal(Model.tempText(NaN, false), "—")
 })
 
@@ -108,8 +109,8 @@ test("every WMO code maps to a drawing the icon knows", () => {
   for (const code of [0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99, 42, null]) {
     assert.ok(kinds.includes(Model.condition(code).kind), `code ${code}`)
   }
-  assert.equal(Model.conditionLabel(0, 1), "Sunny")
-  assert.equal(Model.conditionLabel(0, 0), "Clear")
+  assert.equal(Model.conditionLabel(en, 0, 1), "Sunny")
+  assert.equal(Model.conditionLabel(en, 0, 0), "Clear")
 })
 
 test("rain already falling says when it stops", () => {
@@ -117,8 +118,8 @@ test("rain already falling says when it stops", () => {
   const out = Model.precipOutlook(fc, AT_2PM)
   assert.equal(out.state, "now")
   assert.equal(new Date(out.endMs).getUTCHours(), 19)
-  assert.equal(Model.barHint(out, false), "Rain til 7pm")
-  assert.match(Model.sentence(fc, AT_2PM, false, false), /^Rain until about 7 pm\./)
+  assert.equal(Model.barHint(en, out, false), "Rain til 7pm")
+  assert.match(Model.sentence(en, fc, AT_2PM, false, false), /^Rain until about 7 pm\./)
 })
 
 test("rain on its way says when it arrives", () => {
@@ -126,8 +127,8 @@ test("rain on its way says when it arrives", () => {
   const out = Model.precipOutlook(fc, AT_2PM)
   assert.equal(out.state, "later")
   assert.equal(new Date(out.startMs).getUTCHours(), 17)
-  assert.equal(Model.barHint(out, false), "Rain 5pm")
-  assert.match(Model.sentence(fc, AT_2PM, false, false), /^Cloudy now, rain around 5 pm\./)
+  assert.equal(Model.barHint(en, out, false), "Rain 5pm")
+  assert.match(Model.sentence(en, fc, AT_2PM, false, false), /^Cloudy now, rain around 5 pm\./)
 })
 
 test("the fifteen-minute nowcast beats the hourly forecast", () => {
@@ -139,8 +140,8 @@ test("the fifteen-minute nowcast beats the hourly forecast", () => {
   const out = Model.precipOutlook(fc, AT_2PM)
   assert.equal(out.state, "soon")
   assert.equal(out.minutes, 25)
-  assert.equal(Model.barHint(out, false), "Rain in 25m")
-  assert.equal(Model.firstSentence(fc, AT_2PM, false), "Rain starts in about 25 minutes, lasting past 3:00 pm.")
+  assert.equal(Model.barHint(en, out, false), "Rain in 25m")
+  assert.equal(Model.firstSentence(en, fc, AT_2PM, false), "Rain starts in about 25 minutes, lasting past 3:00 pm.")
 })
 
 test("rain in the next few minutes is 'soon', not a made-up count", () => {
@@ -148,13 +149,13 @@ test("rain in the next few minutes is 'soon', not a made-up count", () => {
   const fc = synthetic(Array(15).fill(3).concat(Array(5).fill(53), Array(40).fill(3)), { current: 3, minutely })
   const out = Model.precipOutlook(fc, AT_2PM)
   assert.equal(out.state, "soon")
-  assert.equal(Model.barHint(out, false), "Drizzle soon")
+  assert.equal(Model.barHint(en, out, false), "Drizzle soon")
 })
 
 test("a dry day keeps the bar quiet", () => {
   const fc = synthetic(Array(72).fill(0), { current: 0 })
   assert.equal(Model.precipOutlook(fc, AT_2PM).state, "none")
-  assert.equal(Model.barHint(Model.precipOutlook(fc, AT_2PM), false), "")
+  assert.equal(Model.barHint(en, Model.precipOutlook(fc, AT_2PM), false), "")
 })
 
 test("a low chance of rain isn't announced", () => {
@@ -164,25 +165,25 @@ test("a low chance of rain isn't announced", () => {
 
 test("a dry sky says how long it lasts", () => {
   const fc = synthetic(Array(20).fill(0).concat(Array(52).fill(3)), { current: 0 })
-  assert.equal(Model.firstSentence(fc, AT_2PM, false), "Sunny until 8 pm, then cloudy.")
+  assert.equal(Model.firstSentence(en, fc, AT_2PM, false), "Sunny until 8 pm, then cloudy.")
 })
 
 test("clear and mostly clear are the same sky", () => {
   const fc = synthetic([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0].concat(Array(48).fill(0)), { current: 0 })
-  assert.equal(Model.firstSentence(fc, AT_2PM, false), "Sunny for the rest of the day.")
+  assert.equal(Model.firstSentence(en, fc, AT_2PM, false), "Sunny for the rest of the day.")
 })
 
 test("today is compared with yesterday", () => {
-  assert.match(Model.secondSentence(synthetic([3], { yesterdayMax: 18 }), AT_2PM, false), /^4° cooler than yesterday/)
-  assert.match(Model.secondSentence(synthetic([3], { yesterdayMax: 10 }), AT_2PM, true), /^7° warmer than yesterday/)
-  assert.match(Model.secondSentence(synthetic([3], { yesterdayMax: 14.5 }), AT_2PM, false), /^About as warm/)
+  assert.match(Model.secondSentence(en, synthetic([3], { yesterdayMax: 18 }), AT_2PM, false), /^4° cooler than yesterday/)
+  assert.match(Model.secondSentence(en, synthetic([3], { yesterdayMax: 10 }), AT_2PM, true), /^7° warmer than yesterday/)
+  assert.match(Model.secondSentence(en, synthetic([3], { yesterdayMax: 14.5 }), AT_2PM, false), /^About as warm/)
 })
 
 test("daylight gained or lost reads like a person would say it", () => {
-  assert.equal(Model.daylightDeltaText(39820, 40000), "−3m 00s")
-  assert.equal(Model.daylightDeltaText(40030, 40000), "+30s")
-  assert.equal(Model.daylightDeltaText(40002, 40000), "same as yesterday")
-  assert.equal(Model.durationText(39820), "11h 03m")
+  assert.equal(Model.daylightDeltaText(en, 39820, 40000), "−3m 00s")
+  assert.equal(Model.daylightDeltaText(en, 40030, 40000), "+30s")
+  assert.equal(Model.daylightDeltaText(en, 40002, 40000), "same as yesterday")
+  assert.equal(Model.durationText(en, 39820), "11h 03m")
 })
 
 test("the sun's progress runs 0 at sunrise to 1 at sunset", () => {
@@ -197,9 +198,9 @@ test("the moon is in the right phase", () => {
   assert.ok(Math.abs(Model.moonPhase(Date.UTC(2024, 3, 23, 23, 49)) - 0.5) < 0.02)
   const n = Model.moonPhase(Date.UTC(2024, 4, 8, 3, 22))
   assert.ok(n < 0.02 || n > 0.98)
-  assert.equal(Model.moonName(0.5), "Full moon")
-  assert.equal(Model.moonName(0.25), "First quarter")
-  assert.equal(Model.moonName(0.12), "Waxing crescent")
+  assert.equal(Model.moonName(en, 0.5), "Full moon")
+  assert.equal(Model.moonName(en, 0.25), "First quarter")
+  assert.equal(Model.moonName(en, 0.12), "Waxing crescent")
   assert.ok(Math.abs(Model.moonIllumination(0.5) - 1) < 1e-9)
 })
 
@@ -257,13 +258,13 @@ test("temperatures take their colour from the theme", () => {
 })
 
 test("readings are named the way forecasters name them", () => {
-  assert.equal(Model.compass(0), "N")
-  assert.equal(Model.compass(142), "SE")
-  assert.equal(Model.compass(359), "N")
-  assert.equal(Model.uvLabel(7), "High")
-  assert.deepEqual(Model.aqiReading({ us: 48, eu: 24 }, true).label, "Good")
-  assert.deepEqual(Model.aqiReading({ us: 48, eu: 45 }, false).label, "Moderate")
-  assert.equal(Model.aqiReading(null, false), null)
+  assert.equal(Model.compass(en, 0), "N")
+  assert.equal(Model.compass(en, 142), "SE")
+  assert.equal(Model.compass(en, 359), "N")
+  assert.equal(Model.uvLabel(en, 7), "High")
+  assert.deepEqual(Model.aqiReading(en, { us: 48, eu: 24 }, true).label, "Good")
+  assert.deepEqual(Model.aqiReading(en, { us: 48, eu: 45 }, false).label, "Moderate")
+  assert.equal(Model.aqiReading(en, null, false), null)
 })
 
 test("location comes from the shared weather.json, or the network", () => {
@@ -298,14 +299,14 @@ test("the rain heads-up fires once per spell", () => {
 
 test("ages read naturally", () => {
   const now = 1_000_000_000_000
-  assert.equal(Model.ageText(now - 20_000, now), "just now")
-  assert.equal(Model.ageText(now - 12 * 60000, now), "12 min ago")
-  assert.equal(Model.ageText(now - 3 * 3600000, now), "3 h ago")
-  assert.equal(Model.ageText(0, now), "")
+  assert.equal(Model.ageText(en, now - 20_000, now), "just now")
+  assert.equal(Model.ageText(en, now - 12 * 60000, now), "12 min ago")
+  assert.equal(Model.ageText(en, now - 3 * 3600000, now), "3 h ago")
+  assert.equal(Model.ageText(en, 0, now), "")
 })
 
 test("the real afternoon reads as a sentence", () => {
-  const s = Model.sentence(FC, NOW, true, false)
+  const s = Model.sentence(en, FC, NOW, true, false)
   assert.match(s, /^[A-Z].*\.$/)
   assert.ok(s.length < 140, s)
 })
@@ -364,27 +365,27 @@ test("the bar names a place briefly", () => {
 })
 
 test("the time difference reads the way people say it", () => {
-  assert.equal(Model.offsetText(32400, -18000), "14 hours ahead")
-  assert.equal(Model.offsetText(19800, 0), "5½ hours ahead")
-  assert.equal(Model.offsetText(20700, 0), "5¾ hours ahead")
-  assert.equal(Model.offsetText(-21600, -18000), "1 hour behind")
-  assert.equal(Model.offsetText(1800, 0), "half an hour ahead")
-  assert.equal(Model.offsetText(0, 2700), "three quarters of an hour behind")
-  assert.equal(Model.offsetText(-18000, -18000), "same time")
+  assert.equal(Model.offsetText(en, 32400, -18000), "14 hours ahead")
+  assert.equal(Model.offsetText(en, 19800, 0), "5½ hours ahead")
+  assert.equal(Model.offsetText(en, 20700, 0), "5¾ hours ahead")
+  assert.equal(Model.offsetText(en, -21600, -18000), "1 hour behind")
+  assert.equal(Model.offsetText(en, 1800, 0), "half an hour ahead")
+  assert.equal(Model.offsetText(en, 0, 2700), "three quarters of an hour behind")
+  assert.equal(Model.offsetText(en, -18000, -18000), "same time")
 })
 
 test("somewhere else is compared with home", () => {
   const here = { offset: -18000, current: { temp: 13 } }
   const tokyo = { offset: 32400, current: { temp: 22 } }
-  assert.equal(Model.compareLine(tokyo, here, false, "Duluth"), "9° warmer than Duluth  ·  14 hours ahead")
-  assert.equal(Model.compareLine({ offset: -18000, current: { temp: 12 } }, here, false, "Duluth"), "About as warm as Duluth  ·  same time")
-  assert.match(Model.compareLine({ offset: 0, current: { temp: 3 } }, here, true, ""), /^18° colder than home/)
-  assert.equal(Model.compareLine(null, here, false, "x"), "")
+  assert.equal(Model.compareLine(en, tokyo, here, false, "Duluth"), "9° warmer than Duluth  ·  14 hours ahead")
+  assert.equal(Model.compareLine(en, { offset: -18000, current: { temp: 12 } }, here, false, "Duluth"), "About as warm as Duluth  ·  same time")
+  assert.match(Model.compareLine(en, { offset: 0, current: { temp: 3 } }, here, true, ""), /^18° colder than home/)
+  assert.equal(Model.compareLine(en, null, here, false, "x"), "")
 })
 
 test("hour by hour runs from this hour to the end of the forecast", () => {
   const fc = synthetic([3])
-  const strip = Model.hourStrip(fc, AT_2PM)
+  const strip = Model.hourStrip(en, fc, AT_2PM)
   assert.equal(strip.length, 72 - 14)
   assert.equal(strip[0].now, true)
   assert.equal(strip[1].now, false)
@@ -394,37 +395,37 @@ test("hour by hour runs from this hour to the end of the forecast", () => {
   assert.equal(new Date(starts[0].t).getUTCHours(), 0)
   assert.equal(starts[0].day, "Tomorrow")
   assert.equal(starts[1].day, "Saturday")
-  assert.equal(Model.hourStrip(null, AT_2PM).length, 0)
-  const real = Model.hourStrip(FC, NOW)
+  assert.equal(Model.hourStrip(en, null, AT_2PM).length, 0)
+  const real = Model.hourStrip(en, FC, NOW)
   assert.ok(real.length > 24 * 6)
   assert.equal(real[0].now, true)
 })
 
 test("an hour is named the way you'd say it", () => {
-  const strip = Model.hourStrip(synthetic([3]), AT_2PM)
-  assert.equal(Model.hourWhen(strip[0], AT_2PM, false), "Now")
-  assert.equal(Model.hourWhen(strip[2], AT_2PM, false), "4 pm")
-  assert.equal(Model.hourWhen(strip[16], AT_2PM, false), "6 am tomorrow")
-  assert.equal(Model.hourWhen(strip[46], AT_2PM, false), "noon Saturday")
-  assert.equal(Model.hourWhen(strip[2], AT_2PM, true), "16:00")
+  const strip = Model.hourStrip(en, synthetic([3]), AT_2PM)
+  assert.equal(Model.hourWhen(en, strip[0], AT_2PM, false), "Now")
+  assert.equal(Model.hourWhen(en, strip[2], AT_2PM, false), "4 pm")
+  assert.equal(Model.hourWhen(en, strip[16], AT_2PM, false), "6 am tomorrow")
+  assert.equal(Model.hourWhen(en, strip[46], AT_2PM, false), "noon Saturday")
+  assert.equal(Model.hourWhen(en, strip[2], AT_2PM, true), "16:00")
 })
 
 test("an hour's readings leave out what the forecast doesn't carry", () => {
   const full = { t: 0, feels: 8, pop: 40, precip: 0.4, wind: 20, windDir: 315, gusts: 45, humidity: 81, uv: 3.2, isDay: true }
-  const rows = Model.hourDetails(full, false)
+  const rows = Model.hourDetails(en, full, false)
   assert.deepEqual(rows.map(r => r.label), ["Feels like", "Rain", "Wind", "Humidity", "UV", "Wear"])
   assert.equal(rows[5].value, "A jacket")
-  const muggy = Model.hourDetails({ t: 0, temp: 27, feels: 29, pop: 10, humidity: 60, isDay: true, uv: 7 }, false)
+  const muggy = Model.hourDetails(en, { t: 0, temp: 27, feels: 29, pop: 10, humidity: 60, isDay: true, uv: 7 }, false)
   assert.equal(muggy.find(r => r.label === "Comfort").value, "Muggy")
   assert.equal(muggy.find(r => r.label === "Wear").value, "Sunglasses")
   assert.equal(rows[1].value, "40%  ·  0.4 mm")
   assert.equal(rows[2].value, "20 km/h NW, gusts 45")
   assert.equal(rows[3].value, "81%")
-  const calm = Model.hourDetails({ t: 0, feels: NaN, pop: 0, precip: 0, wind: 5, windDir: NaN, gusts: 8, humidity: NaN, uv: 0, isDay: false }, false)
+  const calm = Model.hourDetails(en, { t: 0, feels: NaN, pop: 0, precip: 0, wind: 5, windDir: NaN, gusts: 8, humidity: NaN, uv: 0, isDay: false }, false)
   assert.deepEqual(calm.map(r => r.label), ["Rain", "Wind"])
   assert.equal(calm[0].value, "0%")
   assert.equal(calm[1].value, "5 km/h")
-  assert.deepEqual(Model.hourDetails(null, false), [])
+  assert.deepEqual(Model.hourDetails(en, null, false), [])
 })
 
 test("the strip is drawn to each hour and comes to rest on one", () => {
@@ -456,49 +457,49 @@ function withYesterday(nowTemp, thenTemp) {
 
 test("this time yesterday, said only when it's noticeable", () => {
   assert.equal(Model.sinceYesterday(withYesterday(8, 13), AT_2PM, false), -5)
-  assert.match(Model.secondSentence(withYesterday(8, 12.5), AT_2PM, true), /^8° colder than this time yesterday/)
-  assert.match(Model.secondSentence(withYesterday(15, 11), AT_2PM, false), /^4° warmer than this time yesterday/)
-  assert.doesNotMatch(Model.secondSentence(withYesterday(12, 11), AT_2PM, false), /yesterday/)
+  assert.match(Model.secondSentence(en, withYesterday(8, 12.5), AT_2PM, true), /^8° colder than this time yesterday/)
+  assert.match(Model.secondSentence(en, withYesterday(15, 11), AT_2PM, false), /^4° warmer than this time yesterday/)
+  assert.doesNotMatch(Model.secondSentence(en, withYesterday(12, 11), AT_2PM, false), /yesterday/)
   assert.ok(isNaN(Model.sinceYesterday(synthetic([3]), AT_2PM, false)), "no hours from yesterday: the highs stand in")
 })
 
 test("dew point reads as how the air feels", () => {
   assert.ok(Math.abs(Model.dewPoint(20, 50) - 9.3) < 0.2)
   assert.ok(isNaN(Model.dewPoint(20, NaN)))
-  assert.equal(Model.comfortWord(5, 18), "Dry")
-  assert.equal(Model.comfortWord(13, 22), "Comfortable")
-  assert.equal(Model.comfortWord(17, 25), "Sticky")
-  assert.equal(Model.comfortWord(19.5, 27), "Muggy")
-  assert.equal(Model.comfortWord(23, 31), "Oppressive")
-  assert.equal(Model.comfortWord(-4, 3), "Crisp")
-  assert.equal(Model.comfortWord(6, 8), "Damp")
-  assert.equal(Model.comfortWord(NaN, 8), "")
+  assert.equal(Model.comfortWord(en, 5, 18), "Dry")
+  assert.equal(Model.comfortWord(en, 13, 22), "Comfortable")
+  assert.equal(Model.comfortWord(en, 17, 25), "Sticky")
+  assert.equal(Model.comfortWord(en, 19.5, 27), "Muggy")
+  assert.equal(Model.comfortWord(en, 23, 31), "Oppressive")
+  assert.equal(Model.comfortWord(en, -4, 3), "Crisp")
+  assert.equal(Model.comfortWord(en, 6, 8), "Damp")
+  assert.equal(Model.comfortWord(en, NaN, 8), "")
   // 56°F at 98%: the air is wet, whatever the dew point's band says.
-  assert.equal(Model.comfortWord(12.9, 13.3), "Damp")
-  assert.equal(Model.comfortWord(21, 22), "Oppressive")
+  assert.equal(Model.comfortWord(en, 12.9, 13.3), "Damp")
+  assert.equal(Model.comfortWord(en, 21, 22), "Oppressive")
 })
 
 test("what to wear, the way a person would say it", () => {
-  assert.equal(Model.wearHint(-3, 0, 0, 4, false), "A warm coat and gloves.")
-  assert.equal(Model.wearHint(12, 70, 2, 12, true), "A jacket, layers and an umbrella.")
-  assert.equal(Model.wearHint(20, 10, 7, 4, true), "Sunglasses.")
-  assert.equal(Model.wearHint(20, 10, 7, 4, false), "")
-  assert.equal(Model.wearHint(27, 0, 3, 4, true), "T-shirt weather.")
-  assert.equal(Model.wearHint(NaN, 0, 0, 0, true), "")
+  assert.equal(Model.wearHint(en, -3, 0, 0, 4, false), "A warm coat and gloves.")
+  assert.equal(Model.wearHint(en, 12, 70, 2, 12, true), "A jacket, layers and an umbrella.")
+  assert.equal(Model.wearHint(en, 20, 10, 7, 4, true), "Sunglasses.")
+  assert.equal(Model.wearHint(en, 20, 10, 7, 4, false), "")
+  assert.equal(Model.wearHint(en, 27, 0, 3, 4, true), "T-shirt weather.")
+  assert.equal(Model.wearHint(en, NaN, 0, 0, 0, true), "")
 })
 
 test("what to wear is sensible in both °F and °C", () => {
   const f = deg => (deg - 32) * 5 / 9
   // 56°F and drizzly is a light jacket and an umbrella, not a winter coat.
-  assert.equal(Model.wearHint(f(56), 70, 0, 4, false), "A light jacket and an umbrella.")
-  assert.equal(Model.wearHint(f(48), 0, 0, 4, false), "A jacket.")
-  assert.equal(Model.wearHint(f(38), 0, 0, 4, false), "A warm coat.")
-  assert.equal(Model.wearHint(f(20), 0, 0, 4, false), "A warm coat and gloves.")
-  assert.equal(Model.wearHint(f(68), 0, 0, 4, false), "")
-  assert.equal(Model.wearHint(14, 0, 0, 4, false), "A light jacket.")
-  assert.equal(Model.wearHint(9, 0, 0, 4, false), "A jacket.")
-  assert.equal(Model.wearHint(2, 0, 0, 4, false), "A warm coat.")
-  assert.equal(Model.wearHint(-6, 0, 0, 4, false), "A warm coat and gloves.")
+  assert.equal(Model.wearHint(en, f(56), 70, 0, 4, false), "A light jacket and an umbrella.")
+  assert.equal(Model.wearHint(en, f(48), 0, 0, 4, false), "A jacket.")
+  assert.equal(Model.wearHint(en, f(38), 0, 0, 4, false), "A warm coat.")
+  assert.equal(Model.wearHint(en, f(20), 0, 0, 4, false), "A warm coat and gloves.")
+  assert.equal(Model.wearHint(en, f(68), 0, 0, 4, false), "")
+  assert.equal(Model.wearHint(en, 14, 0, 0, 4, false), "A light jacket.")
+  assert.equal(Model.wearHint(en, 9, 0, 0, 4, false), "A jacket.")
+  assert.equal(Model.wearHint(en, 2, 0, 0, 4, false), "A warm coat.")
+  assert.equal(Model.wearHint(en, -6, 0, 0, 4, false), "A warm coat and gloves.")
 })
 
 test("what to wear looks at the hours you'll be out, not the small hours", () => {
@@ -514,7 +515,7 @@ test("what to wear looks at the hours you'll be out, not the small hours", () =>
     hourly: { time, temperature_2m: temps, apparent_temperature: temps, weather_code: time.map(() => 3), is_day: time.map(() => 1), precipitation_probability: time.map(() => 0) },
     daily: { time: ["2026-10-15", "2026-10-16"] }
   }), 0)
-  assert.equal(Model.wearNow(fc, AT_2PM), "A jacket.")
+  assert.equal(Model.wearNow(en, fc, AT_2PM), "A jacket.")
 })
 
 function withMinutely(times, precip, current) {
@@ -524,23 +525,23 @@ const Q = ["2026-10-15T14:00", "2026-10-15T14:15", "2026-10-15T14:30", "2026-10-
 
 test("the nowcast says when rain starts and when it eases", () => {
   const due = withMinutely(Q, [0, 0, 0.3, 0.6, 0.4, 0, 0, 0])
-  assert.equal(Model.nowcast(due, AT_2PM, false, "rain").line, "Rain starts in about 25 minutes, easing by 3:15 pm.")
+  assert.equal(Model.nowcast(en, due, AT_2PM, false, "rain").line, "Rain starts in about 25 minutes, easing by 3:15 pm.")
   const falling = withMinutely(Q, [0.5, 0.4, 0.2, 0, 0, 0, 0, 0], 61)
-  assert.equal(Model.nowcast(falling, AT_2PM, false, "rain").line, "Rain easing by 2:45 pm.")
+  assert.equal(Model.nowcast(en, falling, AT_2PM, false, "rain").line, "Rain easing by 2:45 pm.")
   const steady = withMinutely(Q, Q.map(() => 0.5), 61)
-  assert.equal(Model.nowcast(steady, AT_2PM, true, "snow").line, "Snow for the next two hours.")
+  assert.equal(Model.nowcast(en, steady, AT_2PM, true, "snow").line, "Snow for the next two hours.")
   const late = withMinutely(Q, [0, 0, 0, 0, 0, 0, 0.2, 0.3])
-  assert.equal(Model.nowcast(late, AT_2PM, false, "drizzle").line, "Drizzle starts in about 85 minutes, lasting past 4:00 pm.")
-  assert.equal(Model.nowcast(withMinutely(Q, Q.map(() => 0)), AT_2PM, false).line, "")
-  assert.deepEqual(Model.nowcast(synthetic([3]), AT_2PM, false).slots, [])
+  assert.equal(Model.nowcast(en, late, AT_2PM, false, "drizzle").line, "Drizzle starts in about 85 minutes, lasting past 4:00 pm.")
+  assert.equal(Model.nowcast(en, withMinutely(Q, Q.map(() => 0)), AT_2PM, false).line, "")
+  assert.deepEqual(Model.nowcast(en, synthetic([3]), AT_2PM, false).slots, [])
 })
 
 test("the nowcast sharpens when a spell of rain ends", () => {
   const fc = synthetic(Array(72).fill(61), { current: 61, precip: 0.4, minutely: { time: Q, precipitation: [0.5, 0.4, 0, 0, 0, 0, 0, 0] } })
   const out = Model.precipOutlook(fc, AT_2PM)
   assert.equal(out.state, "now")
-  assert.equal(Model.clockText(out.endMs, false), "2:30 pm")
-  assert.equal(Model.barHint(out, false), "Rain til 2pm")
+  assert.equal(Model.clockText(en, out.endMs, false), "2:30 pm")
+  assert.equal(Model.barHint(en, out, false), "Rain til 2pm")
 })
 
 // ---- Alerts --------------------------------------------------------------
@@ -579,11 +580,11 @@ test("alerts are read, ranked and expired", () => {
 })
 
 test("the humidity tile keeps its line short enough to read whole", () => {
-  assert.equal(Model.dewLine("Muggy", "66°"), "Muggy, dew 66°")
-  assert.equal(Model.dewLine("Comfortable", "52°"), "Comfortable")
-  assert.equal(Model.dewLine("", "52°"), "Dew point 52°")
+  assert.equal(Model.dewLine(en, "Muggy", "66°"), "Muggy, dew 66°")
+  assert.equal(Model.dewLine(en, "Comfortable", "52°"), "Comfortable")
+  assert.equal(Model.dewLine(en, "", "52°"), "Dew point 52°")
   for (const w of ["Dry", "Comfortable", "Sticky", "Muggy", "Oppressive", "Crisp", "Damp"])
-    assert.ok(Model.dewLine(w, "−12°").length <= 16, w)
+    assert.ok(Model.dewLine(en, w, "−12°").length <= 16, w)
 })
 
 test("an update to an alert isn't announced as a new one", () => {
@@ -638,16 +639,16 @@ test("inside the polar circles there's no golden hour at midnight", () => {
 })
 
 test("full moons go by their old names", () => {
-  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 9, 26, 4)), "Hunter's Moon")
-  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 8, 26, 16)), "Harvest Moon")
-  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 0, 3, 10)), "Wolf Moon")
-  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 4, 31, 8)), "Blue Moon")
-  assert.equal(Model.fullMoonTonight(Date.UTC(2026, 9, 15, 12)), "")
+  assert.equal(Model.fullMoonTonight(en, Date.UTC(2026, 9, 26, 4)), "Hunter's Moon")
+  assert.equal(Model.fullMoonTonight(en, Date.UTC(2026, 8, 26, 16)), "Harvest Moon")
+  assert.equal(Model.fullMoonTonight(en, Date.UTC(2026, 0, 3, 10)), "Wolf Moon")
+  assert.equal(Model.fullMoonTonight(en, Date.UTC(2026, 4, 31, 8)), "Blue Moon")
+  assert.equal(Model.fullMoonTonight(en, Date.UTC(2026, 9, 15, 12)), "")
   // Every full moon has a name, and a year has twelve or thirteen of them.
   let n = 0
   for (let t = Date.UTC(2026, 0, 1); t < Date.UTC(2027, 0, 1); t += 3600000) {
-    const name = Model.fullMoonTonight(t)
-    if (name && !Model.fullMoonTonight(t - 3600000)) { n++; assert.match(name, / Moon$/) }
+    const name = Model.fullMoonTonight(en, t)
+    if (name && !Model.fullMoonTonight(en, t - 3600000)) { n++; assert.match(name, / Moon$/) }
   }
   assert.ok(n === 12 || n === 13, n)
 })
@@ -668,22 +669,22 @@ function dayOf(max, min, codes, opts) {
 
 test("a first of the season is announced once, after a long gap", () => {
   const warm = dayOf(23, 12)
-  const fresh = Model.seasonFirsts(warm, AT_2PM, { seen: {} }, true, "Duluth", false)
+  const fresh = Model.seasonFirsts(en, warm, AT_2PM, { seen: {} }, true, "Duluth", false)
   assert.deepEqual(fresh.events, [], "no history: remember it, say nothing")
   assert.equal(fresh.seen.warm, "2026-10-15")
-  const after = Model.seasonFirsts(warm, AT_2PM, { seen: { warm: "2026-05-20" } }, true, "Duluth", false)
+  const after = Model.seasonFirsts(en, warm, AT_2PM, { seen: { warm: "2026-05-20" } }, true, "Duluth", false)
   assert.deepEqual(after.events.map(e => e.title), ["First 70° day since May"])
   assert.equal(after.events[0].body, "Up to 73° in Duluth today.")
-  assert.deepEqual(Model.seasonFirsts(warm, AT_2PM, after, true, "Duluth", false).events, [], "once")
-  assert.deepEqual(Model.seasonFirsts(warm, AT_2PM, { seen: { warm: "2026-09-30" } }, true, "", false).events, [], "too recent")
+  assert.deepEqual(Model.seasonFirsts(en, warm, AT_2PM, after, true, "Duluth", false).events, [], "once")
+  assert.deepEqual(Model.seasonFirsts(en, warm, AT_2PM, { seen: { warm: "2026-09-30" } }, true, "", false).events, [], "too recent")
 
   const frost = dayOf(8, 2, null, { night: -2 })
-  const f = Model.seasonFirsts(frost, AT_2PM, { seen: { frost: "2026-04-02" } }, false, "", false)
+  const f = Model.seasonFirsts(en, frost, AT_2PM, { seen: { frost: "2026-04-02" } }, false, "", false)
   assert.equal(f.events[0].title, "First frost tonight")
   assert.match(f.events[0].body, /^Down to −2° by midnight\. Bring the plants in\.$/)
 
   const snow = dayOf(1, -3, i => i >= 20 ? 73 : 3)
-  assert.equal(Model.seasonFirsts(snow, AT_2PM, { seen: { snow: "2026-03-01" } }, false, "", false).events.find(e => e.kind === "snow").title, "First snow of the season")
+  assert.equal(Model.seasonFirsts(en, snow, AT_2PM, { seen: { snow: "2026-03-01" } }, false, "", false).events.find(e => e.kind === "snow").title, "First snow of the season")
 })
 
 test("a place earns a note for snow, storms and extremes, not routine rain", () => {
@@ -691,14 +692,14 @@ test("a place earns a note for snow, storms and extremes, not routine rain", () 
     current: { time: "2026-10-15T14:00", temperature_2m: temp, weather_code: code, is_day: 1 },
     hourly: { time: ["2026-10-15T14:00"], temperature_2m: [temp] }, daily: { time: ["2026-10-15"] }
   }), 0)
-  assert.equal(Model.placeNote(at(73, -2), AT_2PM, false, "Tokyo").text, "It's snowing in Tokyo")
-  assert.equal(Model.placeNote(at(95, 20), AT_2PM, false, "Lisbon").text, "Thunderstorms over Lisbon")
-  assert.equal(Model.placeNote(at(0, 41), AT_2PM, true, "Phoenix").text, "It's 106° in Phoenix")
-  assert.equal(Model.placeNote(at(0, -31), AT_2PM, false, "Yakutsk").text, "It's −31° in Yakutsk")
-  assert.equal(Model.placeNote(at(63, 12), AT_2PM, false, "Tokyo"), null)
+  assert.equal(Model.placeNote(en, at(73, -2), AT_2PM, false, "Tokyo").text, "It's snowing in Tokyo")
+  assert.equal(Model.placeNote(en, at(95, 20), AT_2PM, false, "Lisbon").text, "Thunderstorms over Lisbon")
+  assert.equal(Model.placeNote(en, at(0, 41), AT_2PM, true, "Phoenix").text, "It's 106° in Phoenix")
+  assert.equal(Model.placeNote(en, at(0, -31), AT_2PM, false, "Yakutsk").text, "It's −31° in Yakutsk")
+  assert.equal(Model.placeNote(en, at(63, 12), AT_2PM, false, "Tokyo"), null)
   const alert = [{ id: "x", event: "Heat Advisory", ends: NaN }]
-  assert.equal(Model.placeNote(at(0, 30), AT_2PM, false, "Austin", alert, 0).text, "Austin is under a Heat Advisory")
-  const note = Model.placeNote(at(73, -2), AT_2PM, false, "Tokyo")
+  assert.equal(Model.placeNote(en, at(0, 30), AT_2PM, false, "Austin", alert, 0).text, "Austin is under a Heat Advisory")
+  const note = Model.placeNote(en, at(73, -2), AT_2PM, false, "Tokyo")
   assert.equal(Model.noteKey("35.690,139.692", note, AT_2PM), "35.690,139.692|snow|2026-10-15")
 })
 

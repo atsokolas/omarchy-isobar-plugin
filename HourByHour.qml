@@ -13,6 +13,8 @@ Item {
   property real lms: 0
   property bool imperial: false
   property bool use24: false
+  // The plugin's Translations, from the panel.
+  property var strings: null
   property var palette: null
   property color foreground: "#cccccc"
   property color dim: "#888888"
@@ -162,7 +164,7 @@ Item {
         Text {
           textFormat: Text.PlainText
           anchors.right: parent.right
-          text: Model.capital(Model.hourWhen(root.hour, root.lms, root.use24))
+          text: Model.capital(Model.hourWhen(root.strings, root.hour, root.lms, root.use24))
           color: root.hour && root.hour.now ? root.accent : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.heading
@@ -171,7 +173,7 @@ Item {
         Text {
           textFormat: Text.PlainText
           anchors.right: parent.right
-          text: root.hour ? Model.conditionLabel(root.hour.code, root.hour.isDay) : ""
+          text: root.hour ? Model.conditionLabel(root.strings, root.hour.code, root.hour.isDay) : ""
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -280,7 +282,7 @@ Item {
               Text {
                 textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: slot.h ? (slot.h.now ? "Now" : Model.hourText(slot.h.t, root.use24)) : ""
+                text: slot.h ? (slot.h.now ? Model.say(root.strings, "when.now") : Model.hourText(root.strings, slot.h.t, root.use24)) : ""
                 color: slot.focused ? root.accent : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -426,7 +428,7 @@ Item {
             x: -width / 2
             y: track.lineY + Style.space(5)
             visible: x + parent.x > 0 && parent.x + width / 2 < track.width
-            text: Model.weekday(modelData.h.t, true)
+            text: Model.weekday(root.strings, modelData.h.t, true)
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -456,7 +458,7 @@ Item {
       transform: Translate { y: (1 - root.settle) * Style.space(4) }
 
       Repeater {
-        model: Model.hourDetails(root.hour, root.imperial)
+        model: Model.hourDetails(root.strings, root.hour, root.imperial)
         Column {
           required property var modelData
           spacing: Style.space(2)
