@@ -29,9 +29,7 @@ var DAILY_FIELDS = [
   "daylight_duration", "precipitation_probability_max", "precipitation_sum", "uv_index_max"
 ]
 
-var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-var WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-var COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+var COMPASS =["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 var HOUR_MS = 3600000
 var DAY_MS = 86400000
@@ -77,6 +75,57 @@ function intSetting(value, fallback, lo, hi) {
 function pad2(n) { return (n < 10 ? "0" : "") + n }
 
 // ---------------------------------------------------------------------------
+// Words. None are written here: every one comes from `tr`, the plugin's
+// Commons.Translations over i18n/*.json (under node, a stand-in reading the
+// same files). Each function that says something takes `tr` first.
+//
+// A sentence is one whole catalog string with %1… slots, never pieces glued
+// together, so a language can put the words in its own order. Where a
+// sentence is about one kind of weather, a catalog may also carry that
+// sentence for that weather alone — "first.wetUntil.snow" is tried before
+// "first.wetUntil" — for languages whose words agree with the noun. English
+// needs none of those.
+
+// %1…%9 filled in one pass, so a place called "%2" stays "%2".
+function fill(s, args) {
+  return String(s).replace(/%([1-9])/g, function(m, d) {
+    var v = args[+d - 1]
+    return v === undefined || v === null ? m : String(v)
+  })
+}
+
+function has(tr, key) { return !!tr && typeof tr.t === "function" && tr.t(key, "") !== "" }
+
+function lookup(tr, key) { return tr && typeof tr.t === "function" ? tr.t(key) : key }
+
+// say(tr, "first.dryUntil", sky, hour, next)
+function say(tr, key) { return fill(lookup(tr, key), Array.prototype.slice.call(arguments, 2)) }
+
+// The sentence about one weather, if the catalog has it, else the general one.
+function sayAbout(tr, key, variant) {
+  var k = variant && has(tr, key + "." + variant) ? key + "." + variant : key
+  return fill(lookup(tr, k), Array.prototype.slice.call(arguments, 3))
+}
+
+// A plural entry; `n` picks the form and is also %1's neighbour in args.
+function sayN(tr, key, n) {
+  var s = tr && typeof tr.tn === "function" ? tr.tn(key, n) : lookup(tr, key)
+  return fill(s, Array.prototype.slice.call(arguments, 3))
+}
+
+function sayAboutN(tr, key, variant, n) {
+  var k = variant && has(tr, key + "." + variant) ? key + "." + variant : key
+  var s = tr && typeof tr.tn === "function" ? tr.tn(k, n) : lookup(tr, k)
+  return fill(s, Array.prototype.slice.call(arguments, 4))
+}
+
+// A decimal in the language's own separator ("13,1" in Danish).
+function decimal(tr, value, places) {
+  if (tr && typeof tr.number === "function") return String(tr.number(value, places))
+  return Number(value).toFixed(places)
+}
+
+// ---------------------------------------------------------------------------
 // Location
 
 // ~/.local/state/omarchy/settings/weather.json, owned by
@@ -113,7 +162,8 @@ function parseIpInfo(raw) {
     var lat = num(parts[0]), lon = num(parts[1])
     if (!onEarth(lat, lon)) return null
     return {
-      name: clip(data.city, 80) || clip(data.region, 80) || "Here",
+      // No name at all is shown as "Home" in the panel's language.
+      name: clip(data.city, 80) || clip(data.region, 80),
       region: clip(data.region, 80),
       country: clip(data.country, 3).toUpperCase(),
       latitude: lat,
@@ -134,6 +184,7 @@ function parseGeocodingResults(raw) {
       if (!r || !clip(r.name, 80) || !onEarth(num(r.latitude), num(r.longitude))) continue
       out.push({
         name: clip(r.name, 80),
+        // admin1 and country come in the language we ask for (geocodeQuery).
         description: [clip(r.admin1, 80), clip(r.country, 80)].filter(function(p) { return !!p }).join(", "),
         country: clip(r.country_code, 3).toUpperCase(),
         latitude: num(r.latitude),
@@ -198,65 +249,87 @@ function speedText(kmh, imperial) {
   return isNaN(s) ? "—" : s + " " + speedUnit(imperial)
 }
 
-function precipText(mm, imperial) {
+function precipText(tr, mm, imperial) {
   var n = num(mm)
   if (isNaN(n)) return "—"
   if (imperial) {
     var inch = n / 25.4
-    return (inch < 0.1 ? inch.toFixed(2) : inch.toFixed(1)) + " in"
+    return decimal(tr, inch, inch < 0.1 ? 2 : 1) + " in"
   }
-  return (n < 10 ? n.toFixed(1) : String(Math.round(n))) + " mm"
+  return (n < 10 ? decimal(tr, n, 1) : String(Math.round(n))) + " mm"
 }
 
-function pressureText(hpa, imperial) {
+function pressureText(tr, hpa, imperial) {
   var n = num(hpa)
   if (isNaN(n)) return "—"
-  return imperial ? (n * 0.0295300).toFixed(2) + " inHg" : Math.round(n) + " hPa"
+  return imperial ? decimal(tr, n * 0.0295300, 2) + " inHg" : Math.round(n) + " hPa"
 }
 
 // ---------------------------------------------------------------------------
 // Conditions, from WMO weather codes.
 
 // `kind` picks the drawing; `wet` is anything falling from the sky;
-// `strength` 1–3 sets how much of it the icon draws.
+// `strength` 1–3 sets how much of it the icon draws. `id` names the label
+// ("condition.<id>") and `noun` what's falling ("noun.<noun>"), as catalog
+// keys rather than words.
+var CONDITIONS = {
+  0: ["clear", "0", false, 0, ""],
+  1: ["partly", "1", false, 0, ""],
+  2: ["partly", "2", false, 0, ""],
+  3: ["cloudy", "3", false, 0, ""],
+  45: ["fog", "45", false, 0, ""],
+  48: ["fog", "48", false, 0, ""],
+  51: ["drizzle", "51", true, 1, "drizzle"],
+  53: ["drizzle", "53", true, 2, "drizzle"],
+  55: ["drizzle", "55", true, 3, "drizzle"],
+  56: ["sleet", "56", true, 1, "freezingDrizzle"],
+  57: ["sleet", "56", true, 1, "freezingDrizzle"],
+  61: ["rain", "61", true, 1, "rain"],
+  63: ["rain", "63", true, 2, "rain"],
+  65: ["rain", "65", true, 3, "heavyRain"],
+  66: ["sleet", "66", true, 2, "freezingRain"],
+  67: ["sleet", "66", true, 2, "freezingRain"],
+  71: ["snow", "71", true, 1, "snow"],
+  73: ["snow", "73", true, 2, "snow"],
+  75: ["snow", "75", true, 3, "heavySnow"],
+  77: ["snow", "77", true, 1, "snow"],
+  80: ["rain", "80", true, 1, "showers"],
+  81: ["rain", "81", true, 2, "showers"],
+  82: ["rain", "82", true, 3, "heavyShowers"],
+  85: ["snow", "85", true, 1, "snowShowers"],
+  86: ["snow", "86", true, 3, "heavySnow"],
+  95: ["storm", "95", true, 2, "thunderstorms"],
+  96: ["storm", "96", true, 3, "thunderstorms"],
+  99: ["storm", "96", true, 3, "thunderstorms"]
+}
+
 function condition(code) {
   var c = parseInt(String(code), 10)
-  if (isNaN(c)) return { kind: "cloudy", label: "—", wet: false, strength: 1, noun: "" }
-  switch (c) {
-    case 0: return { kind: "clear", label: "Clear", wet: false, strength: 0, noun: "" }
-    case 1: return { kind: "partly", label: "Mostly clear", wet: false, strength: 0, noun: "" }
-    case 2: return { kind: "partly", label: "Partly cloudy", wet: false, strength: 0, noun: "" }
-    case 3: return { kind: "cloudy", label: "Overcast", wet: false, strength: 0, noun: "" }
-    case 45: return { kind: "fog", label: "Fog", wet: false, strength: 0, noun: "fog" }
-    case 48: return { kind: "fog", label: "Freezing fog", wet: false, strength: 0, noun: "fog" }
-    case 51: return { kind: "drizzle", label: "Light drizzle", wet: true, strength: 1, noun: "drizzle" }
-    case 53: return { kind: "drizzle", label: "Drizzle", wet: true, strength: 2, noun: "drizzle" }
-    case 55: return { kind: "drizzle", label: "Heavy drizzle", wet: true, strength: 3, noun: "drizzle" }
-    case 56: case 57: return { kind: "sleet", label: "Freezing drizzle", wet: true, strength: 1, noun: "freezing drizzle" }
-    case 61: return { kind: "rain", label: "Light rain", wet: true, strength: 1, noun: "rain" }
-    case 63: return { kind: "rain", label: "Rain", wet: true, strength: 2, noun: "rain" }
-    case 65: return { kind: "rain", label: "Heavy rain", wet: true, strength: 3, noun: "heavy rain" }
-    case 66: case 67: return { kind: "sleet", label: "Freezing rain", wet: true, strength: 2, noun: "freezing rain" }
-    case 71: return { kind: "snow", label: "Light snow", wet: true, strength: 1, noun: "snow" }
-    case 73: return { kind: "snow", label: "Snow", wet: true, strength: 2, noun: "snow" }
-    case 75: return { kind: "snow", label: "Heavy snow", wet: true, strength: 3, noun: "heavy snow" }
-    case 77: return { kind: "snow", label: "Snow grains", wet: true, strength: 1, noun: "snow" }
-    case 80: return { kind: "rain", label: "Light showers", wet: true, strength: 1, noun: "showers" }
-    case 81: return { kind: "rain", label: "Showers", wet: true, strength: 2, noun: "showers" }
-    case 82: return { kind: "rain", label: "Violent showers", wet: true, strength: 3, noun: "heavy showers" }
-    case 85: return { kind: "snow", label: "Snow showers", wet: true, strength: 1, noun: "snow showers" }
-    case 86: return { kind: "snow", label: "Heavy snow showers", wet: true, strength: 3, noun: "heavy snow" }
-    case 95: return { kind: "storm", label: "Thunderstorm", wet: true, strength: 2, noun: "thunderstorms" }
-    case 96: case 99: return { kind: "storm", label: "Thunderstorm, hail", wet: true, strength: 3, noun: "thunderstorms" }
-  }
-  return { kind: "cloudy", label: "Cloudy", wet: false, strength: 0, noun: "" }
+  if (isNaN(c)) return { kind: "cloudy", id: "", wet: false, strength: 1, noun: "" }
+  var row = CONDITIONS[c] || ["cloudy", "cloudy", false, 0, ""]
+  return { kind: row[0], id: row[1], wet: row[2], strength: row[3], noun: row[4] }
 }
 
 // "Clear" in the day is "Sunny"; at night the sky is simply clear.
-function conditionLabel(code, isDay) {
+function conditionId(code, isDay) {
   var cond = condition(code)
-  if (cond.kind === "clear" && Number(isDay) !== 0) return "Sunny"
-  return cond.label
+  return cond.kind === "clear" && Number(isDay) !== 0 ? "sunny" : cond.id
+}
+
+function conditionLabel(tr, code, isDay) {
+  var id = conditionId(code, isDay)
+  return id ? say(tr, "condition." + id) : "—"
+}
+
+// The label in the middle of a sentence: "56°, light rain." Lowering the first
+// letter is right for most languages; one where it isn't ("Regen" in German)
+// says so with "conditionInline.<id>".
+function conditionInline(tr, code, isDay) {
+  var id = conditionId(code, isDay)
+  if (!id) return "—"
+  if (has(tr, "conditionInline." + id)) return say(tr, "conditionInline." + id)
+  var label = conditionLabel(tr, code, isDay)
+  return label.charAt(0).toLowerCase() + label.slice(1)
 }
 
 // The drawing for the bar and the panel: kind plus day/night.
@@ -279,62 +352,63 @@ function dateKey(lms) {
   return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate())
 }
 
-function hourText(lms, use24) {
+// A chart's hour: "3pm", "noon", "15".
+function hourText(tr, lms, use24) {
   var h = new Date(lms).getUTCHours()
   if (use24) return pad2(h)
-  if (h === 0) return "12am"
-  if (h === 12) return "noon"
-  return (h % 12) + (h < 12 ? "am" : "pm")
+  if (h === 0) return say(tr, "time.hour.midnight")
+  if (h === 12) return say(tr, "time.hour.noon")
+  return say(tr, h < 12 ? "time.hour.am" : "time.hour.pm", h % 12)
 }
 
 // A spoken hour for sentences: "3 pm", "noon", "midnight", "15:00".
-function spokenHour(lms, use24) {
+function spokenHour(tr, lms, use24) {
   var h = new Date(lms).getUTCHours()
-  if (use24) return pad2(h) + ":00"
-  if (h === 0) return "midnight"
-  if (h === 12) return "noon"
-  return (h % 12) + " " + (h < 12 ? "am" : "pm")
+  if (use24) return say(tr, "time.spoken.24", pad2(h))
+  if (h === 0) return say(tr, "time.spoken.midnight")
+  if (h === 12) return say(tr, "time.spoken.noon")
+  return say(tr, h < 12 ? "time.spoken.am" : "time.spoken.pm", h % 12)
 }
 
-function clockText(lms, use24) {
+function clockText(tr, lms, use24) {
   var d = new Date(lms)
   var h = d.getUTCHours(), m = d.getUTCMinutes()
-  if (use24) return pad2(h) + ":" + pad2(m)
-  return ((h % 12) || 12) + ":" + pad2(m) + " " + (h < 12 ? "am" : "pm")
+  if (use24) return say(tr, "time.clock.24", pad2(h), pad2(m))
+  return say(tr, h < 12 ? "time.clock.am" : "time.clock.pm", (h % 12) || 12, pad2(m))
 }
 
-function weekday(lms, short) {
-  var d = new Date(lms).getUTCDay()
-  return short ? WEEKDAYS_SHORT[d] : WEEKDAYS[d]
+function weekday(tr, lms, short) {
+  return say(tr, (short ? "weekday.short." : "weekday.") + new Date(lms).getUTCDay())
 }
 
-function durationText(seconds) {
+function durationText(tr, seconds) {
   var s = Math.max(0, Math.round(num(seconds) || 0))
   var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
-  return h + "h " + pad2(m) + "m"
+  return say(tr, "duration", h, pad2(m))
 }
 
 // Daylight gained or lost since yesterday — the small fact that tells you
 // which way the year is turning.
-function daylightDeltaText(todaySeconds, yesterdaySeconds) {
+function daylightDeltaText(tr, todaySeconds, yesterdaySeconds) {
   var t = num(todaySeconds), y = num(yesterdaySeconds)
   if (isNaN(t) || isNaN(y)) return ""
   var d = Math.round(t - y)
-  if (Math.abs(d) < 5) return "same as yesterday"
+  if (Math.abs(d) < 5) return say(tr, "daylight.same")
   var a = Math.abs(d), m = Math.floor(a / 60), s = a % 60
-  return (d > 0 ? "+" : "−") + (m > 0 ? m + "m " + pad2(s) + "s" : s + "s")
+  var way = d > 0 ? "gained" : "lost"
+  return m > 0 ? say(tr, "daylight." + way + "Minutes", m, pad2(s)) : say(tr, "daylight." + way + "Seconds", s)
 }
 
-function ageText(fetchedAt, nowMs) {
+function ageText(tr, fetchedAt, nowMs) {
   var f = num(fetchedAt)
   if (isNaN(f) || f <= 0) return ""
   var mins = Math.floor((nowMs - f) / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return mins + " min ago"
+  if (mins < 1) return say(tr, "age.justNow")
+  if (mins < 60) return sayN(tr, "age.minutes", mins, mins)
   var hrs = Math.floor(mins / 60)
-  if (hrs < 24) return hrs + " h ago"
+  if (hrs < 24) return sayN(tr, "age.hours", hrs, hrs)
   var days = Math.floor(hrs / 24)
-  return days === 1 ? "yesterday" : days + " days ago"
+  return days === 1 ? say(tr, "age.yesterday") : sayN(tr, "age.days", days, days)
 }
 
 // ---------------------------------------------------------------------------
@@ -360,8 +434,12 @@ function airQuery(lat, lon) {
     + "&current=us_aqi,european_aqi"
 }
 
-function geocodeQuery(text) {
-  return GEOCODE_URL + "?name=" + encodeURIComponent(trim(text)) + "&count=6&language=en&format=json"
+// Results come back named in the panel's language where Open-Meteo has it:
+// "pt-BR" asks for "pt", anything unlike a language code asks for English.
+function geocodeQuery(text, language) {
+  var lang = String(language || "en").split("-")[0].toLowerCase()
+  if (!/^[a-z]{2,3}$/.test(lang)) lang = "en"
+  return GEOCODE_URL + "?name=" + encodeURIComponent(trim(text)) + "&count=6&language=" + lang + "&format=json"
 }
 
 var USER_AGENT = "omarchy-isobar/1.1.1 (github.com/atsokolas/omarchy-isobar-plugin)"
@@ -529,7 +607,7 @@ function hoursOfDay(fc, key) {
 // Hour by hour: every hour from this one to the end of the forecast, each
 // knowing whether it is now and whether a new day starts with it.
 
-function hourStrip(fc, lms) {
+function hourStrip(tr, fc, lms) {
   var start = hourIndex(fc, lms)
   if (start < 0) return []
   var out = []
@@ -541,51 +619,58 @@ function hourStrip(fc, lms) {
     for (var k in h) entry[k] = h[k]
     entry.now = i === start
     entry.dayStart = key !== lastKey
-    entry.day = dayLabel(h.t, lms)
+    entry.day = dayLabel(tr, h.t, lms)
     lastKey = key
     out.push(entry)
   }
   return out
 }
 
+// Whole days from the day of `lms` to the day of `t`.
+function daysAhead(t, lms) {
+  return Math.round((localMs(dateKey(t)) - localMs(dateKey(lms))) / DAY_MS)
+}
+
 // "Today", "Tomorrow", then the weekday.
-function dayLabel(t, lms) {
-  var days = Math.round((localMs(dateKey(t)) - localMs(dateKey(lms))) / DAY_MS)
-  if (days === 0) return "Today"
-  if (days === 1) return "Tomorrow"
-  return weekday(t)
+function dayLabel(tr, t, lms) {
+  var days = daysAhead(t, lms)
+  if (days === 0) return say(tr, "day.today")
+  if (days === 1) return say(tr, "day.tomorrow")
+  return weekday(tr, t)
 }
 
 // When an hour is, the way you'd say it: "Now", "4 pm", "6 am tomorrow",
 // "noon Saturday".
-function hourWhen(h, lms, use24) {
+function hourWhen(tr, h, lms, use24) {
   if (!h) return ""
-  if (h.now) return "Now"
-  var day = dayLabel(h.t, lms)
-  var at = spokenHour(h.t, use24)
-  return day === "Today" ? at : at + " " + (day === "Tomorrow" ? "tomorrow" : day)
+  if (h.now) return say(tr, "when.now")
+  var days = daysAhead(h.t, lms)
+  var at = spokenHour(tr, h.t, use24)
+  if (days === 0) return say(tr, "when.today", at)
+  if (days === 1) return say(tr, "when.tomorrow", at)
+  return say(tr, "when.later", at, weekday(tr, h.t))
 }
 
 // The readings under the strip for one hour, leaving out what the forecast
 // doesn't carry.
-function hourDetails(h, imperial) {
+function hourDetails(tr, h, imperial) {
   if (!h) return []
   var out = []
-  if (!isNaN(num(h.feels))) out.push({ label: "Feels like", value: tempText(h.feels, imperial) })
+  if (!isNaN(num(h.feels))) out.push({ label: say(tr, "detail.feelsLike"), value: tempText(h.feels, imperial) })
   var pop = num(h.pop), mm = num(h.precip)
-  if (!isNaN(pop)) out.push({ label: "Rain", value: Math.round(pop) + "%" + (mm > 0 ? "  ·  " + precipText(mm, imperial) : "") })
+  if (!isNaN(pop)) out.push({ label: say(tr, "detail.rain"), value: Math.round(pop) + "%" + (mm > 0 ? "  ·  " + precipText(tr, mm, imperial) : "") })
   if (!isNaN(num(h.wind))) {
-    var w = speedText(h.wind, imperial)
-    var dir = compass(h.windDir)
+    var dir = compass(tr, h.windDir)
+    var w = speedText(h.wind, imperial) + (dir ? " " + dir : "")
     var gust = num(h.gusts)
-    out.push({ label: "Wind", value: w + (dir ? " " + dir : "") + (!isNaN(gust) && gust - num(h.wind) >= 10 ? ", gusts " + speed(gust, imperial) : "") })
+    out.push({ label: say(tr, "detail.wind"), value: !isNaN(gust) && gust - num(h.wind) >= 10 ? say(tr, "wind.gusts", w, speed(gust, imperial)) : w })
   }
-  if (!isNaN(num(h.humidity))) out.push({ label: "Humidity", value: Math.round(num(h.humidity)) + "%" })
-  if (!isNaN(num(h.uv)) && h.isDay) out.push({ label: "UV", value: uvLabel(h.uv) + "  " + Math.round(num(h.uv)) })
-  var feel = comfortWord(dewPoint(h.temp, h.humidity), h.temp)
-  if (feel) out.push({ label: "Comfort", value: feel })
-  var wear = wearHint(h.feels, h.pop, h.uv, 0, h.isDay)
-  if (wear) out.push({ label: "Wear", value: wear.replace(/\.$/, "") })
+  if (!isNaN(num(h.humidity))) out.push({ label: say(tr, "detail.humidity"), value: Math.round(num(h.humidity)) + "%" })
+  if (!isNaN(num(h.uv)) && h.isDay) out.push({ label: say(tr, "detail.uv"), value: uvLabel(tr, h.uv) + "  " + Math.round(num(h.uv)) })
+  var feel = comfortWord(tr, dewPoint(h.temp, h.humidity), h.temp)
+  if (feel) out.push({ label: say(tr, "detail.comfort"), value: feel })
+  var wear = wearPhrase(tr, h.feels, h.pop, h.uv, 0, h.isDay)
+  if (wear) out.push({ label: say(tr, "detail.wear"), value: wear })
   return out
 }
 
@@ -663,18 +748,9 @@ function precipOutlook(fc, lms) {
 
 function capital(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1) }
 
-// The short hint the bar can carry beside the temperature, or "".
-function barHint(outlook, use24) {
-  if (!outlook || outlook.state === "none") return ""
-  var noun = capital(shortNoun(outlook.noun))
-  if (outlook.state === "now") return isNaN(outlook.endMs) ? noun : noun + " til " + hourText(outlook.endMs, use24)
-  if (outlook.minutes < 10) return noun + " soon"
-  if (outlook.minutes < 60) return noun + " in " + Math.max(5, Math.round(outlook.minutes / 5) * 5) + "m"
-  return noun + " " + hourText(outlook.startMs, use24)
-}
-
+// The five words the bar and the nowcast use for what's falling.
 function shortNoun(noun) {
-  var n = String(noun || "rain")
+  var n = String(noun || "rain").toLowerCase()
   if (n.indexOf("snow") >= 0) return "snow"
   if (n.indexOf("thunder") >= 0) return "storms"
   if (n.indexOf("drizzle") >= 0) return "drizzle"
@@ -682,25 +758,57 @@ function shortNoun(noun) {
   return "rain"
 }
 
+// The short hint the bar can carry beside the temperature, or "".
+function barHint(tr, outlook, use24) {
+  if (!outlook || outlook.state === "none") return ""
+  var id = shortNoun(outlook.noun)
+  var what = say(tr, "short." + id)
+  if (outlook.state === "now")
+    return capital(isNaN(outlook.endMs) ? sayAbout(tr, "hint.now", id, what) : sayAbout(tr, "hint.until", id, what, hourText(tr, outlook.endMs, use24)))
+  if (outlook.minutes < 10) return capital(sayAbout(tr, "hint.soon", id, what))
+  if (outlook.minutes < 60) {
+    var m = Math.max(5, Math.round(outlook.minutes / 5) * 5)
+    return capital(sayAboutN(tr, "hint.inMinutes", id, m, what, m))
+  }
+  return capital(sayAbout(tr, "hint.at", id, what, hourText(tr, outlook.startMs, use24)))
+}
+
+// The toast's title half an hour before: "Rain in about 25 minutes".
+function headsUpTitle(tr, outlook) {
+  if (!outlook || outlook.state === "none") return ""
+  var id = shortNoun(outlook.noun)
+  var m = Math.max(5, Math.round(outlook.minutes / 5) * 5)
+  return capital(sayAboutN(tr, "toast.headsUp", id, m, say(tr, "short." + id), m))
+}
+
 // ---------------------------------------------------------------------------
 // The sentence — what a person would tell you if you asked them.
 
+// overnight | morning | afternoon | evening | night
 function partOfDay(lms) {
   var h = new Date(lms).getUTCHours()
   if (h < 5) return "overnight"
-  if (h < 12) return "this morning"
-  if (h < 17) return "this afternoon"
-  if (h < 21) return "this evening"
-  return "tonight"
+  if (h < 12) return "morning"
+  if (h < 17) return "afternoon"
+  if (h < 21) return "evening"
+  return "night"
 }
 
-function skyPhrase(code, isDay) {
-  var k = condition(code).kind
-  if (k === "clear") return isDay ? "Sunny" : "Clear"
-  if (k === "partly") return condition(code).label
-  if (k === "cloudy") return "Cloudy"
-  if (k === "fog") return "Foggy"
-  return capital(condition(code).noun || "Cloudy")
+// What the sky is doing, as a catalog id: the noun when something falls.
+function skyId(code, isDay) {
+  var cond = condition(code)
+  if (cond.kind === "clear") return isDay ? "sunny" : "clear"
+  if (cond.kind === "partly") return cond.id === "1" ? "mostlyClear" : "partlyCloudy"
+  if (cond.kind === "fog") return "foggy"
+  if (cond.wet && cond.noun) return cond.noun
+  return "cloudy"
+}
+
+// The sky in the middle of a sentence ("then cloudy"); sentences start with
+// a capital however their words come.
+function skyWord(tr, code, isDay) {
+  var cond = condition(code)
+  return cond.wet && cond.noun ? say(tr, "noun." + cond.noun) : say(tr, "sky." + skyId(code, isDay))
 }
 
 function sameSky(a, b) {
@@ -710,134 +818,138 @@ function sameSky(a, b) {
   return (ka === "clear" && kb === "partly") || (ka === "partly" && kb === "clear")
 }
 
-function firstSentence(fc, lms, use24) {
+// When rain that's hours off arrives: "around" a time today, otherwise the
+// part of tomorrow (or "overnight", which needs no day).
+function laterWhen(startMs, lms) {
+  if (new Date(startMs).getUTCDate() === new Date(lms).getUTCDate()) return "around"
+  var part = partOfDay(startMs)
+  return part === "overnight" ? "overnight" : "tomorrow" + capital(part)
+}
+
+function firstSentence(tr, fc, lms, use24) {
   var outlook = precipOutlook(fc, lms)
   var noun = outlook.noun
 
   // The fifteen-minute data knows both ends of a spell close at hand.
   if (outlook.state === "now" || outlook.state === "soon") {
-    var close = nowcast(fc, lms, use24, noun).line
+    var close = nowcast(tr, fc, lms, use24, noun).line
     if (close) return close
   }
 
+  var what = noun ? say(tr, "noun." + noun) : ""
   if (outlook.state === "now") {
-    if (isNaN(outlook.endMs)) return capital(noun) + " for the rest of the day."
-    return capital(noun) + " until about " + spokenHour(outlook.endMs, use24) + "."
+    if (isNaN(outlook.endMs)) return capital(sayAbout(tr, "first.wetRestOfDay", noun, what))
+    return capital(sayAbout(tr, "first.wetUntil", noun, what, spokenHour(tr, outlook.endMs, use24)))
   }
   if (outlook.state === "soon") {
-    if (outlook.minutes <= 10) return capital(noun) + " starting any minute."
-    return capital(noun) + " starting in about " + (Math.round(outlook.minutes / 5) * 5) + " minutes."
+    if (outlook.minutes <= 10) return capital(sayAbout(tr, "first.startingAnyMinute", noun, what))
+    var m = Math.round(outlook.minutes / 5) * 5
+    return capital(sayAboutN(tr, "first.startingIn", noun, m, what, m))
   }
 
   var hours = upcomingHours(fc, lms, 12)
   var now = fc.current
-  var sky = skyPhrase(now.code, now.isDay)
-  if (outlook.state === "later") {
-    var wording = new Date(outlook.startMs).getUTCDate() !== new Date(lms).getUTCDate()
-      ? partOfDay(outlook.startMs) === "overnight" ? "overnight" : "tomorrow " + partOfDay(outlook.startMs).replace("this ", "")
-      : "around " + spokenHour(outlook.startMs, use24)
-    if (wording === "tomorrow tonight") wording = "tomorrow night"
-    return sky + " now, " + noun + " " + wording + "."
-  }
+  var sky = skyWord(tr, now.code, now.isDay)
+  if (outlook.state === "later")
+    return capital(sayAbout(tr, "first.later." + laterWhen(outlook.startMs, lms), noun, sky, what, spokenHour(tr, outlook.startMs, use24)))
 
   // Dry. Say how long this sky lasts, and what comes after.
+  var id = skyId(now.code, now.isDay)
   for (var i = 1; i < hours.length; i++) {
-    if (!sameSky(now.code, hours[i].code)) {
-      var next = skyPhrase(hours[i].code, hours[i].isDay).toLowerCase()
-      return sky + " until " + spokenHour(hours[i].t, use24) + ", then " + next + "."
-    }
+    if (!sameSky(now.code, hours[i].code))
+      return capital(sayAbout(tr, "first.dryUntil", id, sky, spokenHour(tr, hours[i].t, use24), skyWord(tr, hours[i].code, hours[i].isDay)))
   }
-  return sky + " " + (now.isDay ? "for the rest of the day" : "through the night") + "."
+  return capital(sayAbout(tr, now.isDay ? "first.dryRestOfDay" : "first.dryThroughNight", id, sky))
 }
 
-function secondSentence(fc, lms, imperial) {
+function secondSentence(tr, fc, lms, imperial) {
   var td = today(fc, lms), yd = yesterday(fc, lms)
   var bits = []
   // The same hour yesterday is how a change is felt; it's only worth saying
   // when it's noticeable. Without yesterday's hours, the highs stand in.
   var hourAgo = sinceYesterday(fc, lms, imperial)
   if (!isNaN(hourAgo)) {
-    if (hourAgo >= 3) bits.push(hourAgo + "° warmer than this time yesterday")
-    else if (hourAgo <= -3) bits.push(Math.abs(hourAgo) + "° colder than this time yesterday")
+    if (hourAgo >= 3) bits.push(sayN(tr, "second.warmerThisTime", hourAgo, hourAgo))
+    else if (hourAgo <= -3) bits.push(sayN(tr, "second.colderThisTime", -hourAgo, -hourAgo))
   } else if (td && yd && !isNaN(td.max) && !isNaN(yd.max)) {
     var diff = deltaDegrees(td.max - yd.max, imperial)
-    if (diff >= 2) bits.push(diff + "° warmer than yesterday")
-    else if (diff <= -2) bits.push(Math.abs(diff) + "° cooler than yesterday")
-    else bits.push("About as warm as yesterday")
+    if (diff >= 2) bits.push(sayN(tr, "second.warmerThanYesterday", diff, diff))
+    else if (diff <= -2) bits.push(sayN(tr, "second.coolerThanYesterday", -diff, -diff))
+    else bits.push(say(tr, "second.asWarmAsYesterday"))
   }
   var gusts = fc.current.gusts
-  if (!isNaN(gusts) && gusts >= 45) bits.push("gusts to " + speedText(gusts, imperial))
-  else if (td && !isNaN(td.uvMax) && td.uvMax >= 6 && fc.current.isDay) bits.push("UV " + uvLabel(td.uvMax).toLowerCase() + " at midday")
+  if (!isNaN(gusts) && gusts >= 45) bits.push(say(tr, "second.gusts", speedText(gusts, imperial)))
+  else if (td && !isNaN(td.uvMax) && td.uvMax >= 6 && fc.current.isDay) bits.push(say(tr, "second.uv." + uvLevel(td.uvMax)))
   if (bits.length === 0) return ""
-  var s = bits.join(", ")
-  return capital(s) + "."
+  return capital(bits.length === 1 ? say(tr, "second.one", bits[0]) : say(tr, "second.two", bits[0], bits[1]))
 }
 
-function sentence(fc, lms, imperial, use24) {
+function sentence(tr, fc, lms, imperial, use24) {
   if (!fc) return ""
-  var a = firstSentence(fc, lms, use24)
-  var b = secondSentence(fc, lms, imperial)
-  return b ? a + " " + b : a
+  var a = firstSentence(tr, fc, lms, use24)
+  var b = secondSentence(tr, fc, lms, imperial)
+  return b ? say(tr, "sentence.join", a, b) : a
 }
 
 // ---------------------------------------------------------------------------
 // Readings
 
-function compass(deg) {
+function compass(tr, deg) {
   var n = num(deg)
   if (isNaN(n)) return ""
-  return COMPASS[Math.round(((n % 360) + 360) % 360 / 22.5) % 16]
+  return say(tr, "compass." + COMPASS[Math.round(((n % 360) + 360) % 360 / 22.5) % 16])
 }
 
-function windWord(kmh) {
+var WIND_WORDS = [[2, "calm"], [12, "lightAir"], [20, "lightBreeze"], [29, "gentleBreeze"], [39, "freshBreeze"],
+  [50, "strongBreeze"], [62, "nearGale"], [75, "gale"], [Infinity, "stormForce"]]
+
+function windWord(tr, kmh) {
   var n = num(kmh)
   if (isNaN(n)) return ""
-  if (n < 2) return "Calm"
-  if (n < 12) return "Light air"
-  if (n < 20) return "Light breeze"
-  if (n < 29) return "Gentle breeze"
-  if (n < 39) return "Fresh breeze"
-  if (n < 50) return "Strong breeze"
-  if (n < 62) return "Near gale"
-  if (n < 75) return "Gale"
-  return "Storm force"
+  for (var i = 0; i < WIND_WORDS.length; i++) if (n < WIND_WORDS[i][0]) return say(tr, "windWord." + WIND_WORDS[i][1])
+  return ""
 }
 
-function uvLabel(uv) {
+// low | moderate | high | veryHigh | extreme
+function uvLevel(uv) {
   var n = num(uv)
   if (isNaN(n)) return ""
-  if (n < 3) return "Low"
-  if (n < 6) return "Moderate"
-  if (n < 8) return "High"
-  if (n < 11) return "Very high"
-  return "Extreme"
+  if (n < 3) return "low"
+  if (n < 6) return "moderate"
+  if (n < 8) return "high"
+  if (n < 11) return "veryHigh"
+  return "extreme"
+}
+
+function uvLabel(tr, uv) {
+  var level = uvLevel(uv)
+  return level ? say(tr, "uv." + level) : ""
 }
 
 // US AQI for the places that read it, the European index elsewhere.
-function aqiReading(air, imperial) {
+function aqiReading(tr, air, imperial) {
   if (!air) return null
   var useUs = imperial ? !isNaN(air.us) : isNaN(air.eu)
   var v = Math.round(useUs ? air.us : air.eu)
   if (isNaN(v)) return null
-  var label
+  var level
   if (useUs) {
-    label = v <= 50 ? "Good" : v <= 100 ? "Moderate" : v <= 150 ? "Sensitive groups" : v <= 200 ? "Unhealthy" : v <= 300 ? "Very unhealthy" : "Hazardous"
+    level = v <= 50 ? "good" : v <= 100 ? "moderate" : v <= 150 ? "sensitive" : v <= 200 ? "unhealthy" : v <= 300 ? "veryUnhealthy" : "hazardous"
   } else {
-    label = v <= 20 ? "Good" : v <= 40 ? "Fair" : v <= 60 ? "Moderate" : v <= 80 ? "Poor" : v <= 100 ? "Very poor" : "Extremely poor"
+    level = v <= 20 ? "good" : v <= 40 ? "fair" : v <= 60 ? "moderate" : v <= 80 ? "poor" : v <= 100 ? "veryPoor" : "extremelyPoor"
   }
-  return { value: v, label: label, scale: useUs ? "US AQI" : "EU AQI", level: useUs ? clamp(v / 300, 0, 1) : clamp(v / 100, 0, 1) }
+  var scale = useUs ? "us" : "eu"
+  return { value: v, label: say(tr, "aqi." + scale + "." + level), scale: say(tr, "aqi." + scale), level: useUs ? clamp(v / 300, 0, 1) : clamp(v / 100, 0, 1) }
 }
 
 // Rising, falling, or steady over the last three hours.
-function pressureTrend(fc, lms) {
+function pressureTrend(tr, fc, lms) {
   var i = hourIndex(fc, lms)
   if (i < 3) return ""
   var now = fc.hourly[i].pressure, before = fc.hourly[i - 3].pressure
   if (isNaN(now) || isNaN(before)) return ""
   var d = now - before
-  if (d >= 1) return "Rising"
-  if (d <= -1) return "Falling"
-  return "Steady"
+  return say(tr, d >= 1 ? "pressure.rising" : d <= -1 ? "pressure.falling" : "pressure.steady")
 }
 
 // ---------------------------------------------------------------------------
@@ -885,16 +997,12 @@ function moonPhase(utcMs) {
 
 function moonIllumination(phase) { return (1 - Math.cos(2 * Math.PI * phase)) / 2 }
 
-function moonName(phase) {
+function moonName(tr, phase) {
   var p = ((num(phase) % 1) + 1) % 1
-  if (p < 0.033 || p > 0.967) return "New moon"
-  if (p < 0.216) return "Waxing crescent"
-  if (p < 0.283) return "First quarter"
-  if (p < 0.466) return "Waxing gibbous"
-  if (p < 0.533) return "Full moon"
-  if (p < 0.716) return "Waning gibbous"
-  if (p < 0.783) return "Last quarter"
-  return "Waning crescent"
+  var id = p < 0.033 || p > 0.967 ? "new" : p < 0.216 ? "waxingCrescent" : p < 0.283 ? "firstQuarter"
+    : p < 0.466 ? "waxingGibbous" : p < 0.533 ? "full" : p < 0.716 ? "waningGibbous"
+    : p < 0.783 ? "lastQuarter" : "waningCrescent"
+  return say(tr, "moon." + id)
 }
 
 // The lit part of the moon as a closed polyline in a unit circle centred on
@@ -1100,20 +1208,20 @@ function tempColor(c, palette) {
 // ---------------------------------------------------------------------------
 // Outward
 
-function tooltipText(fc, lms, imperial, placeName) {
+function tooltipText(tr, fc, lms, imperial, placeName) {
   if (!fc) return APP_NAME
   var now = fc.current
   var td = today(fc, lms)
-  var line = conditionLabel(now.code, now.isDay) + ", " + tempText(now.temp, imperial)
-  if (td) line += "  ·  H " + tempText(td.max, imperial) + "  L " + tempText(td.min, imperial)
+  var line = say(tr, "tooltip.now", conditionLabel(tr, now.code, now.isDay), tempText(now.temp, imperial))
+  if (td) line = say(tr, "tooltip.withRange", line, tempText(td.max, imperial), tempText(td.min, imperial))
   return (placeName ? placeName + "\n" : "") + line
 }
 
-function copyPayload(fc, lms, imperial, use24, placeName) {
+function copyPayload(tr, fc, lms, imperial, use24, placeName) {
   if (!fc) return ""
   var now = fc.current
-  return (placeName ? placeName + ": " : "") + tempText(now.temp, imperial) + ", "
-    + conditionLabel(now.code, now.isDay).toLowerCase() + ". " + sentence(fc, lms, imperial, use24)
+  var text = say(tr, "copy.text", tempText(now.temp, imperial), conditionInline(tr, now.code, now.isDay), sentence(tr, fc, lms, imperial, use24))
+  return placeName ? say(tr, "copy.place", placeName, text) : text
 }
 
 function copyCommand(text) {
@@ -1215,30 +1323,32 @@ function removePlace(list, key) {
 }
 
 // "14 hours ahead", "5½ hours behind", "same time".
-function offsetText(there, here) {
+function offsetText(tr, there, here) {
   var d = (num(there) - num(here)) / 3600
   if (isNaN(d)) return ""
-  if (Math.abs(d) < 0.01) return "same time"
+  if (Math.abs(d) < 0.01) return say(tr, "offset.same")
   var a = Math.abs(d), whole = Math.floor(a), frac = a - whole
-  var way = d > 0 ? "ahead" : "behind"
+  var way = d > 0 ? "Ahead" : "Behind"
   // Under an hour (Nepal, Newfoundland's neighbours) it's said in words.
-  if (whole === 0) return (frac >= 0.7 ? "three quarters of an hour " : frac >= 0.45 ? "half an hour " : "a quarter of an hour ") + way
-  var n = String(whole) + (frac >= 0.7 ? "¾" : frac >= 0.45 ? "½" : frac >= 0.2 ? "¼" : "")
-  return n + (n === "1" ? " hour " : " hours ") + way
+  if (whole === 0) return say(tr, "offset." + (frac >= 0.7 ? "threeQuarters" : frac >= 0.45 ? "half" : "quarter") + way)
+  var part = frac >= 0.7 ? "¾" : frac >= 0.45 ? "½" : frac >= 0.2 ? "¼" : ""
+  // A fraction of an hour has no plural rule to follow; whole hours do.
+  if (part) return say(tr, "offset.fractionHours" + way, whole + part)
+  return sayN(tr, "offset.hours" + way, whole, whole)
 }
 
 // How somewhere else compares with home, in one line.
-function compareLine(there, here, imperial, homeName) {
+function compareLine(tr, there, here, imperial, homeName) {
   if (!there || !here) return ""
   var bits = []
   var diff = deltaDegrees(there.current.temp - here.current.temp, imperial)
-  var home = homeName || "home"
+  var home = homeName || say(tr, "compare.home")
   if (!isNaN(diff)) {
-    if (diff >= 2) bits.push(diff + "° warmer than " + home)
-    else if (diff <= -2) bits.push(Math.abs(diff) + "° colder than " + home)
-    else bits.push("About as warm as " + home)
+    if (diff >= 2) bits.push(sayN(tr, "compare.warmer", diff, diff, home))
+    else if (diff <= -2) bits.push(sayN(tr, "compare.colder", -diff, -diff, home))
+    else bits.push(say(tr, "compare.asWarm", home))
   }
-  var off = offsetText(there.offset, here.offset)
+  var off = offsetText(tr, there.offset, here.offset)
   if (off) bits.push(off)
   return bits.join("  ·  ")
 }
@@ -1265,56 +1375,61 @@ function dewPoint(tempC, rh) {
   return 243.12 * g / (17.62 - g)
 }
 
-function comfortWord(dewC, tempC) {
+function comfortWord(tr, dewC, tempC) {
   var d = num(dewC), t = num(tempC)
   if (isNaN(d)) return ""
-  if (!isNaN(t) && t <= 10) return d <= 2 ? "Crisp" : "Damp"
+  var id
+  if (!isNaN(t) && t <= 10) id = d <= 2 ? "crisp" : "damp"
   // Near saturation the air is wet whatever the dew point says.
-  if (!isNaN(t) && t < 20 && t - d <= 2) return "Damp"
-  if (d < 10) return "Dry"
-  if (d < 16) return "Comfortable"
-  if (d < 18) return "Sticky"
-  if (d < 21) return "Muggy"
-  return "Oppressive"
+  else if (!isNaN(t) && t < 20 && t - d <= 2) id = "damp"
+  else id = d < 10 ? "dry" : d < 16 ? "comfortable" : d < 18 ? "sticky" : d < 21 ? "muggy" : "oppressive"
+  return say(tr, "comfort." + id)
 }
 
 // The humidity tile's second line: how the air feels, with the dew point
 // when there's room for it beside the word.
-function dewLine(word, dewText) {
-  if (!word) return "Dew point " + dewText
-  var s = word + ", dew " + dewText
+function dewLine(tr, word, dewText) {
+  if (!word) return say(tr, "dew.alone", dewText)
+  var s = say(tr, "dew.withWord", word, dewText)
   return s.length <= 16 ? s : word
 }
 
-function andList(items) {
+// "a, b and c", in the language's own way of listing.
+function andList(tr, items) {
   if (items.length === 0) return ""
   if (items.length === 1) return items[0]
-  return items.slice(0, -1).join(", ") + " and " + items[items.length - 1]
+  return say(tr, "list.last", items.slice(0, -1).join(say(tr, "list.separator")), items[items.length - 1])
 }
 
-// What to wear, said the way a person would: "A jacket and an umbrella."
+// What to wear, said the way a person would: "A jacket and an umbrella".
 // `swing` is the day's spread in °C; layers only matter when it's wide.
 // Feels-like steps, in °C and roughly °F: gloves below 27°, a warm coat to
 // 41°, a jacket to 54°, a light jacket to 63°.
-function wearHint(feelsC, pop, uv, swing, isDay) {
+function wearPhrase(tr, feelsC, pop, uv, swing, isDay) {
   var f = num(feelsC)
   if (isNaN(f)) return ""
   var items = []
-  if (f <= -3) items.push("a warm coat", "gloves")
-  else if (f <= 5) items.push("a warm coat")
-  else if (f <= 12) items.push("a jacket")
-  else if (f <= 17) items.push("a light jacket")
+  if (f <= -3) items.push("warmCoat", "gloves")
+  else if (f <= 5) items.push("warmCoat")
+  else if (f <= 12) items.push("jacket")
+  else if (f <= 17) items.push("lightJacket")
   if (num(swing) >= 10 && f > 0) items.push("layers")
-  if (num(pop) >= 50) items.push("an umbrella")
+  if (num(pop) >= 50) items.push("umbrella")
   if (isDay && num(uv) >= 6) items.push("sunglasses")
-  if (items.length === 0) return f >= 24 ? "T-shirt weather." : ""
-  return capital(andList(items)) + "."
+  if (items.length === 0) return f >= 24 ? say(tr, "wear.tshirt") : ""
+  return capital(andList(tr, items.map(function(id) { return say(tr, "wear." + id) })))
+}
+
+// The same, as a sentence of its own: "A jacket and an umbrella."
+function wearHint(tr, feelsC, pop, uv, swing, isDay) {
+  var phrase = wearPhrase(tr, feelsC, pop, uv, swing, isDay)
+  return phrase ? say(tr, "wear.sentence", phrase) : ""
 }
 
 // For the next eight hours — the time you're likely to be out in it — the
 // coldest it will feel, the best chance of rain, the strongest sun, and how
 // far the day swings.
-function wearNow(fc, lms) {
+function wearNow(tr, fc, lms) {
   if (!fc || !fc.current) return ""
   var hours = upcomingHours(fc, lms, 8)
   var feels = num(fc.current.feels), pop = 0, uv = 0, lo = Infinity, hi = -Infinity
@@ -1325,7 +1440,7 @@ function wearNow(fc, lms) {
     if (!isNaN(h.uv) && h.isDay) uv = Math.max(uv, h.uv)
     if (!isNaN(h.temp)) { lo = Math.min(lo, h.temp); hi = Math.max(hi, h.temp) }
   }
-  return wearHint(feels, pop, uv, hi > lo ? hi - lo : 0, true)
+  return wearHint(tr, feels, pop, uv, hi > lo ? hi - lo : 0, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -1334,27 +1449,35 @@ function wearNow(fc, lms) {
 
 var NOWCAST_WET = 0.1
 
-function nowcast(fc, lms, use24, noun) {
+function nowcast(tr, fc, lms, use24, noun) {
   var out = { slots: [], line: "" }
   if (!fc || !fc.minutely) return out
   var slots = fc.minutely.filter(function(m) { return m.t + 15 * 60000 > lms }).slice(0, 8)
   out.slots = slots
   if (slots.length === 0) return out
   var wet = function(i) { return slots[i].precip >= NOWCAST_WET }
-  var what = capital(shortNoun(noun || "rain"))
+  var id = shortNoun(noun || "rain")
+  var what = say(tr, "short." + id)
   var firstWet = -1
   for (var i = 0; i < slots.length; i++) if (wet(i)) { firstWet = i; break }
   if (firstWet < 0) return out
   var dryAfter = -1
   for (var j = firstWet + 1; j < slots.length; j++) if (!wet(j)) { dryAfter = j; break }
-  var ending = dryAfter >= 0 ? "easing by " + clockText(slots[dryAfter].t, use24) : "lasting past " + clockText(slots[slots.length - 1].t + 15 * 60000, use24)
+  // Easing by when it turns dry, or lasting past the end of what we can see.
+  var easing = dryAfter >= 0
+  var at = easing ? clockText(tr, slots[dryAfter].t, use24) : clockText(tr, slots[slots.length - 1].t + 15 * 60000, use24)
   if (firstWet === 0 && slots[0].t <= lms + 60000) {
-    out.line = dryAfter >= 0 ? what + " " + ending + "." : what + " for the next two hours."
+    out.line = capital(easing ? sayAbout(tr, "nowcast.easing", id, what, at) : sayAbout(tr, "nowcast.nextTwoHours", id, what))
     return out
   }
   var minutes = Math.max(0, Math.round((Math.max(lms, slots[firstWet].t) - lms) / 60000))
-  var when = minutes < 10 ? "any minute" : "in about " + Math.round(minutes / 5) * 5 + " minutes"
-  out.line = what + " starts " + when + ", " + ending + "."
+  var tail = easing ? "Easing" : "Lasting"
+  if (minutes < 10) {
+    out.line = capital(sayAbout(tr, "nowcast.anyMinute" + tail, id, what, at))
+  } else {
+    var m = Math.round(minutes / 5) * 5
+    out.line = capital(sayAboutN(tr, "nowcast.inMinutes" + tail, id, m, what, m, at))
+  }
   return out
 }
 
@@ -1467,7 +1590,6 @@ function goldenGlow(fc, lms) {
 // moon in a calendar month is a Blue Moon.
 
 var SYNODIC_DAYS = 29.530588853
-var MOON_NAMES = ["Wolf", "Snow", "Worm", "Pink", "Flower", "Strawberry", "Buck", "Sturgeon", "Corn", "Hunter's", "Beaver", "Cold"]
 
 function nearestFullMoon(utcMs) {
   var ref = Date.UTC(2000, 0, 6, 18, 14)
@@ -1475,20 +1597,22 @@ function nearestFullMoon(utcMs) {
   return ref + (k + 0.5) * SYNODIC_DAYS * DAY_MS
 }
 
-function fullMoonName(fullMs) {
+// The names by month, January's Wolf Moon to December's Cold Moon, are
+// "fullMoon.0" to "fullMoon.11".
+function fullMoonName(tr, fullMs) {
   var d = new Date(fullMs)
   var harvest = nearestFullMoon(Date.UTC(d.getUTCFullYear(), 8, 22, 12))
   var cycle = SYNODIC_DAYS * DAY_MS
-  if (Math.abs(fullMs - harvest) < DAY_MS) return "Harvest Moon"
-  if (Math.abs(fullMs - harvest - cycle) < DAY_MS) return "Hunter's Moon"
-  if (new Date(fullMs - cycle).getUTCMonth() === d.getUTCMonth()) return "Blue Moon"
-  return MOON_NAMES[d.getUTCMonth()] + " Moon"
+  if (Math.abs(fullMs - harvest) < DAY_MS) return say(tr, "fullMoon.harvest")
+  if (Math.abs(fullMs - harvest - cycle) < DAY_MS) return say(tr, "fullMoon.hunters")
+  if (new Date(fullMs - cycle).getUTCMonth() === d.getUTCMonth()) return say(tr, "fullMoon.blue")
+  return say(tr, "fullMoon." + d.getUTCMonth())
 }
 
 // The full moon's name on the night of it, else "".
-function fullMoonTonight(utcMs) {
+function fullMoonTonight(tr, utcMs) {
   var full = nearestFullMoon(utcMs)
-  return Math.abs(utcMs - full) <= 20 * HOUR_MS ? fullMoonName(full) : ""
+  return Math.abs(utcMs - full) <= 20 * HOUR_MS ? fullMoonName(tr, full) : ""
 }
 
 // ---------------------------------------------------------------------------
@@ -1497,11 +1621,11 @@ function fullMoonTonight(utcMs) {
 // A kind seen for the first time ever is only remembered — Isobar can't know
 // it's a first without a history.
 
-var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-
 function daysBetween(a, b) { return Math.round((localMs(b) - localMs(a)) / DAY_MS) }
 
-function seasonFirsts(fc, lms, state, imperial, placeName, use24) {
+// Months are "since.0" to "since.11": the form a month takes after "since",
+// which in many languages isn't the one it has on its own.
+function seasonFirsts(tr, fc, lms, state, imperial, placeName, use24) {
   var seen = {}
   var prev = (state && state.seen) || {}
   for (var s in prev) seen[s] = prev[s]
@@ -1510,12 +1634,12 @@ function seasonFirsts(fc, lms, state, imperial, placeName, use24) {
   var today = dateKey(lms)
   var td = dayIndex(fc, today) >= 0 ? fc.daily[dayIndex(fc, today)] : null
   var ahead = upcomingHours(fc, lms, 24)
-  var where = placeName ? " in " + placeName : ""
-
+  // Each body comes as two sentences, with the place named and without.
+  var at = placeName ? "Place" : ""
+  var warmLabel = imperial ? 70 : 20
+  var hotLabel = imperial ? 90 : 30
   var warmC = imperial ? (70 - 32) * 5 / 9 : 20
   var hotC = imperial ? (90 - 32) * 5 / 9 : 30
-  var warmLabel = imperial ? "70°" : "20°"
-  var hotLabel = imperial ? "90°" : "30°"
 
   var frostHour = null
   for (var i = 0; i < Math.min(ahead.length, 18); i++) if (ahead[i].temp <= 0) { frostHour = ahead[i]; break }
@@ -1527,20 +1651,23 @@ function seasonFirsts(fc, lms, state, imperial, placeName, use24) {
 
   var checks = [
     { kind: "warm", gap: 60, holds: td && td.max >= warmC,
-      title: function(last) { return "First " + warmLabel + " day since " + MONTHS[new Date(localMs(last)).getUTCMonth()] },
-      body: function() { return "Up to " + tempText(td.max, imperial) + where + " today." } },
+      title: function(last) { return say(tr, "firsts.warm.title", warmLabel, say(tr, "since." + new Date(localMs(last)).getUTCMonth())) },
+      body: function() { return say(tr, "firsts.upTo" + at, tempText(td.max, imperial), placeName) } },
     { kind: "hot", gap: 120, holds: td && td.max >= hotC,
-      title: function() { return "First " + hotLabel + " day of the year" },
-      body: function() { return "Up to " + tempText(td.max, imperial) + where + " today." } },
+      title: function() { return say(tr, "firsts.hot.title", hotLabel) },
+      body: function() { return say(tr, "firsts.upTo" + at, tempText(td.max, imperial), placeName) } },
     { kind: "frost", gap: 120, holds: !!frostHour,
-      title: function() { return "First frost tonight" },
-      body: function() { return "Down to " + tempText(frostHour.temp, imperial) + " by " + spokenHour(frostHour.t, use24) + ". Bring the plants in." } },
+      title: function() { return say(tr, "firsts.frost.title") },
+      body: function() { return say(tr, "firsts.frost.body", tempText(frostHour.temp, imperial), spokenHour(tr, frostHour.t, use24)) } },
     { kind: "freeze", gap: 120, holds: td && td.max < 0,
-      title: function() { return "First day below freezing" },
-      body: function() { return "It won't get above " + tempText(td.max, imperial) + where + " today." } },
+      title: function() { return say(tr, "firsts.freeze.title") },
+      body: function() { return say(tr, "firsts.freeze.body" + at, tempText(td.max, imperial), placeName) } },
     { kind: "snow", gap: 120, holds: !!snowHour,
-      title: function() { return "First snow of the season" },
-      body: function() { return capital(condition(snowHour.code).noun || "snow") + " from around " + spokenHour(snowHour.t, use24) + "." } }
+      title: function() { return say(tr, "firsts.snow.title") },
+      body: function() {
+        var noun = condition(snowHour.code).noun || "snow"
+        return capital(sayAbout(tr, "firsts.snow.body", noun, say(tr, "noun." + noun), spokenHour(tr, snowHour.t, use24)))
+      } }
   ]
 
   for (var c = 0; c < checks.length; c++) {
@@ -1558,17 +1685,18 @@ function seasonFirsts(fc, lms, state, imperial, placeName, use24) {
 // Notes from your places: something you'd mention if you were there.
 // Routine rain isn't news; snow, storms, real heat and real cold are.
 
-function placeNote(fc, lms, imperial, name, alerts, nowMs) {
+function placeNote(tr, fc, lms, imperial, name, alerts, nowMs) {
   if (!fc || !fc.current) return null
-  var where = name || "there"
+  var where = name || say(tr, "note.there")
   var live = activeAlerts(alerts, num(nowMs) || 0)
-  if (live.length > 0) return { kind: "alert", text: where + " is under a " + live[0].event }
+  // The event is the Weather Service's own words, in English.
+  if (live.length > 0) return { kind: "alert", text: say(tr, "note.alert", where, live[0].event) }
   var k = condition(fc.current.code).kind
-  if (k === "snow") return { kind: "snow", text: "It's snowing in " + where }
-  if (k === "storm") return { kind: "storm", text: "Thunderstorms over " + where }
+  if (k === "snow") return { kind: "snow", text: say(tr, "note.snow", where) }
+  if (k === "storm") return { kind: "storm", text: say(tr, "note.storm", where) }
   var t = fc.current.temp
-  if (t >= 35) return { kind: "heat", text: "It's " + tempText(t, imperial) + " in " + where }
-  if (t <= -15) return { kind: "cold", text: "It's " + tempText(t, imperial) + " in " + where }
+  if (t >= 35) return { kind: "heat", text: say(tr, "note.heat", tempText(t, imperial), where) }
+  if (t <= -15) return { kind: "cold", text: say(tr, "note.cold", tempText(t, imperial), where) }
   return null
 }
 
@@ -1606,14 +1734,16 @@ if (typeof module !== "undefined") {
     shouldUseImperial: shouldUseImperial, temp: temp, signed: signed, tempText: tempText,
     deltaDegrees: deltaDegrees, speed: speed, speedUnit: speedUnit, speedText: speedText,
     precipText: precipText, pressureText: pressureText,
-    condition: condition, conditionLabel: conditionLabel, iconKind: iconKind,
+    fill: fill, say: say, sayN: sayN, capital: capital,
+    condition: condition, conditionId: conditionId, conditionLabel: conditionLabel, conditionInline: conditionInline, iconKind: iconKind,
     localMs: localMs, nowLocal: nowLocal, dateKey: dateKey, hourText: hourText, spokenHour: spokenHour,
     clockText: clockText, weekday: weekday, durationText: durationText,
     daylightDeltaText: daylightDeltaText, ageText: ageText,
     forecastQuery: forecastQuery, airQuery: airQuery, geocodeQuery: geocodeQuery, curl: curl,
     parseForecast: parseForecast, parseAir: parseAir, hourIndex: hourIndex, dayIndex: dayIndex,
     today: today, yesterday: yesterday, upcomingHours: upcomingHours, hoursOfDay: hoursOfDay, week: week,
-    isWetHour: isWetHour, precipOutlook: precipOutlook, barHint: barHint, shortNoun: shortNoun,
+    isWetHour: isWetHour, precipOutlook: precipOutlook, barHint: barHint, headsUpTitle: headsUpTitle, shortNoun: shortNoun,
+    skyId: skyId, skyWord: skyWord, laterWhen: laterWhen, uvLevel: uvLevel, andList: andList, wearPhrase: wearPhrase,
     partOfDay: partOfDay, sentence: sentence, firstSentence: firstSentence, secondSentence: secondSentence,
     compass: compass, windWord: windWord, uvLabel: uvLabel, aqiReading: aqiReading, pressureTrend: pressureTrend,
     polar: polar, sunEvents: sunEvents, sunProgress: sunProgress, moonPhase: moonPhase, moonIllumination: moonIllumination, moonName: moonName,

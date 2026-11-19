@@ -78,7 +78,7 @@ BarWidget {
     function now(): string {
       var s = root.service
       if (!s || !s.current) return ""
-      return s.tempLabel + " " + Model.conditionLabel(s.current.code, s.current.isDay)
+      return s.tempLabel + " " + Model.conditionLabel(s.strings, s.current.code, s.current.isDay)
     }
     function summary(): string { return root.service ? root.service.sentence : "" }
     // One line per live NWS alert for home: "Wind Advisory — until 7 PM".
@@ -96,7 +96,7 @@ BarWidget {
         var fc = s.placeForecasts[p.key]
         if (!fc) return p.name + "  —"
         var lms = Model.nowLocal(s.nowMs, fc.offset)
-        return p.name + "  " + Model.tempText(fc.current.temp, s.imperial) + "  " + Model.conditionLabel(fc.current.code, fc.current.isDay) + "  " + Model.clockText(lms, s.use24) + (p.onBar ? "  (bar)" : "")
+        return p.name + "  " + Model.tempText(fc.current.temp, s.imperial) + "  " + Model.conditionLabel(s.strings, fc.current.code, fc.current.isDay) + "  " + Model.clockText(s.strings, lms, s.use24) + (p.onBar ? "  (bar)" : "")
       }).join("\n")
     }
   }
@@ -129,7 +129,7 @@ BarWidget {
     fixedHeight: root.vertical ? content.implicitHeight + button.scaledVerticalPadding * 2 : -1
     readonly property color accent: root.service && root.service.palette ? root.service.palette.accent : (root.bar ? root.bar.barForeground : "#cccccc")
     foreground: root.opened ? accent : (root.bar ? root.bar.barForeground : "#cccccc")
-    tooltipText: root.service ? Model.tooltipText(root.service.forecast, root.service.localNow, root.service.imperial, root.service.placeName) : Model.APP_NAME
+    tooltipText: root.service ? Model.tooltipText(root.service.strings, root.service.forecast, root.service.localNow, root.service.imperial, root.service.placeName) : Model.APP_NAME
     horizontalMargin: 8.75
     verticalPadding: 6
 

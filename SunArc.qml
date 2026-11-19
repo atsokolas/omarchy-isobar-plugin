@@ -13,6 +13,8 @@ Item {
   property var yesterday: null
   property real lms: 0
   property bool use24: false
+  // The plugin's Translations, from the panel.
+  property var strings: null
   property real moonPhase: 0.5
   property color foreground: "#cccccc"
   property color dim: Qt.darker(foreground, 1.55)
@@ -120,7 +122,7 @@ Item {
     textFormat: Text.PlainText
     anchors.left: parent.left
     anchors.bottom: parent.bottom
-    text: root.day && root.polar === "" ? "↑ " + Model.clockText(root.day.sunrise, root.use24) : ""
+    text: root.day && root.polar === "" ? "↑ " + Model.clockText(root.strings, root.day.sunrise, root.use24) : ""
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -130,7 +132,7 @@ Item {
     textFormat: Text.PlainText
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    text: root.day && root.polar === "" ? Model.clockText(root.day.sunset, root.use24) + " ↓" : ""
+    text: root.day && root.polar === "" ? Model.clockText(root.strings, root.day.sunset, root.use24) + " ↓" : ""
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -140,11 +142,12 @@ Item {
     textFormat: Text.PlainText
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
-    readonly property string delta: root.day && root.yesterday ? Model.daylightDeltaText(root.day.daylight, root.yesterday.daylight) : ""
+    readonly property string delta: root.day && root.yesterday ? Model.daylightDeltaText(root.strings, root.day.daylight, root.yesterday.daylight) : ""
     text: !root.day ? ""
-      : root.polar === "night" ? Model.moonName(root.moonPhase) + "  ·  no sunrise today"
-      : root.polar === "day" ? "The sun doesn't set today"
-      : (root.up ? "" : Model.moonName(root.moonPhase) + "  ·  ") + Model.durationText(root.day.daylight) + " of light" + (delta ? ", " + delta : "")
+      : root.polar === "night" ? Model.say(root.strings, "sun.polarNight", Model.moonName(root.strings, root.moonPhase))
+      : root.polar === "day" ? Model.say(root.strings, "sun.polarDay")
+      : Model.say(root.strings, root.up ? (delta ? "sun.lightDelta" : "sun.light") : (delta ? "sun.moonLightDelta" : "sun.moonLight"),
+          Model.durationText(root.strings, root.day.daylight), delta, Model.moonName(root.strings, root.moonPhase))
     color: root.dim
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption

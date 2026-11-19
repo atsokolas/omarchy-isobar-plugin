@@ -8,6 +8,8 @@ QtObject {
   property var air: null
   property bool imperial: false
   property bool use24: false
+  // The plugin's Translations, from the service.
+  property var strings: null
   property real nowMs: Date.now()
   // Live NWS alerts for this place; empty outside the US.
   property var alerts: []
@@ -18,7 +20,7 @@ QtObject {
   readonly property var todayData: Model.today(forecast, localNow)
   readonly property var yesterdayData: Model.yesterday(forecast, localNow)
   readonly property var weekData: Model.week(forecast, localNow)
-  readonly property string sentence: Model.sentence(forecast, localNow, imperial, use24)
+  readonly property string sentence: Model.sentence(strings, forecast, localNow, imperial, use24)
 
   // The forecast's own is_day flag, which knows about polar days.
   readonly property string kind: current ? Model.iconKind(current.code) : "cloudy"
@@ -26,10 +28,10 @@ QtObject {
   readonly property int strength: current ? Model.condition(current.code).strength : 1
 
   readonly property var activeAlerts: Model.activeAlerts(alerts, nowMs)
-  readonly property var nowcast: Model.nowcast(forecast, localNow, use24, outlook.noun)
-  readonly property string wear: Model.wearNow(forecast, localNow)
-  readonly property string comfort: current ? Model.comfortWord(current.dew, current.temp) : ""
+  readonly property var nowcast: Model.nowcast(strings, forecast, localNow, use24, outlook.noun)
+  readonly property string wear: Model.wearNow(strings, forecast, localNow)
+  readonly property string comfort: current ? Model.comfortWord(strings, current.dew, current.temp) : ""
   readonly property real golden: Model.goldenGlow(forecast, localNow)
   // On the night of a full moon, its old name.
-  readonly property string fullMoon: Model.fullMoonTonight(nowMs)
+  readonly property string fullMoon: Model.fullMoonTonight(strings, nowMs)
 }

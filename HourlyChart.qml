@@ -13,6 +13,8 @@ Item {
   property var palette: null
   property bool imperial: false
   property bool use24: false
+  // The plugin's Translations, from the panel.
+  property var strings: null
   property bool startsNow: true
   property var sunEvents: []          // [{t, rise: bool}]
   property color foreground: "#cccccc"
@@ -235,7 +237,7 @@ Item {
         textFormat: Text.PlainText
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        text: hour ? (index === 0 && root.startsNow ? "Now" : Model.hourText(hour.t, root.use24)) : ""
+        text: hour ? (index === 0 && root.startsNow ? Model.say(root.strings, "when.now") : Model.hourText(root.strings, hour.t, root.use24)) : ""
         color: index === 0 && root.startsNow ? root.foreground : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
